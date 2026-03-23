@@ -1,5 +1,12 @@
 import { useState, useCallback } from 'react'
-import { db, migrateOpenTasks, type BujoStatus } from './db'
+import {
+  addEntry,
+  updateEntry,
+  deleteEntry,
+  migrateOpenTasks,
+  type BujoStatus,
+  type BujoEntry,
+} from './db'
 import { useEntriesForDate } from './hooks'
 
 const STATUS_ICONS: Record<BujoStatus, string> = {
@@ -24,27 +31,22 @@ export default function DailyLog() {
 
   const entries = useEntriesForDate(viewDate)
 
-  const addEntry = useCallback(async () => {
+  const handleAdd = useCallback(async () => {
     const trimmed = newBody.trim()
     if (!trimmed) return
-    await db.entries.add({
-      date: viewDate,
-      status: newStatus,
-      body: trimmed,
-      createdAt: Date.now(),
-    })
+    await addEntry(viewDate, newStatus, trimmed)
     setNewBody('')
     setNewStatus('task')
   }, [viewDate, newBody, newStatus])
 
-  const cycleStatus = useCallback(async (id: number, current: BujoStatus) => {
-    const idx = STATUS_CYCLE.indexOf(current)
+  const cycleStatus = useCallback(async (entry: BujoEntry) => {
+    const idx = STATUS_CYCLE.indexOf(entry.status)
     const next = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length]
-    await db.entries.update(id, { status: next })
+    await updateEntry(entry, { status: next })
   }, [])
 
-  const deleteEntry = useCallback(async (id: number) => {
-    await db.entries.delete(id)
+  const handleDelete = useCallback(async (entry: BujoEntry) => {
+    await deleteEntry(entry)
   }, [])
 
   const handleMigrate = useCallback(async () => {
@@ -92,10 +94,10 @@ export default function DailyLog() {
           <li className="empty">No entries for this day.</li>
         ) : (
           entries.map((entry) => (
-            <li key={entry.id} className={`entry status-${entry.status}`}>
+            <li key={entry._id} className={`entry status-${entry.status}`}>
               <button
                 className="signifier"
-                onClick={() => cycleStatus(entry.id!, entry.status)}
+                onClick={() => cycleStatus(entry)}
                 title={`Status: ${entry.status} (click to cycle)`}
               >
                 {STATUS_ICONS[entry.status]}
@@ -103,7 +105,7 @@ export default function DailyLog() {
               <span className="body">{entry.body}</span>
               <button
                 className="delete-btn"
-                onClick={() => deleteEntry(entry.id!)}
+                onClick={() => handleDelete(entry)}
                 aria-label="Delete"
               >
                 &times;
@@ -118,7 +120,7 @@ export default function DailyLog() {
         className="new-entry"
         onSubmit={(e) => {
           e.preventDefault()
-          addEntry()
+          handleAdd()
         }}
       >
         <select

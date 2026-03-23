@@ -4,6 +4,31 @@ services:
     restart: unless-stopped
     expose:
       - "80"
+    depends_on:
+      couchdb-init:
+        condition: service_completed_successfully
+
+  couchdb-init:
+    image: curlimages/curl:latest
+    depends_on:
+      - couchdb
+    environment:
+      - COUCHDB_USER=${COUCHDB_USER:-admin}
+      - COUCHDB_PASSWORD=${COUCHDB_PASSWORD:-changeme}
+    volumes:
+      - ./init-couchdb.sh:/init-couchdb.sh:ro
+    entrypoint: ["/bin/sh", "/init-couchdb.sh"]
+
+  couchdb:
+    image: couchdb:3
+    restart: unless-stopped
+    environment:
+      - COUCHDB_USER=${COUCHDB_USER:-admin}
+      - COUCHDB_PASSWORD=${COUCHDB_PASSWORD:-changeme}
+    volumes:
+      - couchdb_data:/opt/couchdb/data
+    expose:
+      - "5984"
 
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -13,3 +38,6 @@ services:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on:
       - bujo
+
+volumes:
+  couchdb_data:

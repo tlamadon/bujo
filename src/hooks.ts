@@ -1,14 +1,36 @@
-import { useLiveQuery } from 'dexie-react-hooks'
-import { db, type BujoEntry } from './db'
+import { useState, useEffect } from 'react'
+import { localDb, getEntriesForDate, type BujoEntry } from './db'
 
-/** Live query: all entries for a given date, ordered by creation time */
+/** Reactive hook: all entries for a given date, auto-updates on local & remote changes */
 export function useEntriesForDate(date: string): BujoEntry[] | undefined {
-  return useLiveQuery(
-    () =>
-      db.entries
-        .where('date')
-        .equals(date)
-        .sortBy('createdAt'),
-    [date],
-  )
+  const [entries, setEntries] = useState<BujoEntry[] | undefined>(undefined)
+
+  useEffect(() => {
+    let cancelled = false
+
+    // Initial fetch
+    const load = () =>
+      getEntriesForDate(date).then((docs) => {
+        if (!cancelled) setEntries(docs)
+      })
+
+    load()
+
+    // Listen for any local changes (includes replicated changes from remote)
+    const changes = localDb.changes({
+      since: 'now',
+      live: true,
+    })
+
+    changes.on('change', () => {
+      load()
+    })
+
+    return () => {
+      cancelled = true
+      changes.cancel()
+    }
+  }, [date])
+
+  return entries
 }
