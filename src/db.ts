@@ -78,6 +78,21 @@ export async function getEntriesForDate(date: string): Promise<BujoEntry[]> {
     .sort((a, b) => a.createdAt - b.createdAt)
 }
 
+export async function getEntriesForDateRange(
+  startDate: string,
+  endDate: string,
+): Promise<BujoEntry[]> {
+  const result = await localDb.allDocs({
+    include_docs: true,
+    startkey: `${startDate}:`,
+    endkey: `${endDate}:\ufff0`,
+  })
+  return result.rows
+    .map((r) => r.doc!)
+    .filter((d) => d.type === 'entry')
+    .sort((a, b) => a.createdAt - b.createdAt)
+}
+
 // ─── Migration Logic ───────────────────────────────────────────────
 
 export async function migrateOpenTasks(today: string): Promise<number> {

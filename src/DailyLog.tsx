@@ -24,8 +24,12 @@ function toISODate(d: Date): string {
   return d.toISOString().slice(0, 10)
 }
 
-export default function DailyLog() {
-  const [viewDate, setViewDate] = useState(() => toISODate(new Date()))
+interface Props {
+  initialDate?: string | null
+}
+
+export default function DailyLog({ initialDate }: Props) {
+  const [viewDate, setViewDate] = useState(() => initialDate || toISODate(new Date()))
   const [newBody, setNewBody] = useState('')
   const [newStatus, setNewStatus] = useState<BujoStatus>('task')
 
