@@ -1,0 +1,16 @@
+{
+  "name": "bujo-middleware",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "@hono/node-server": "^1.14.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  }
+}

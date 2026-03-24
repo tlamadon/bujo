@@ -18,6 +18,7 @@ export interface BujoEntry {
   status: BujoStatus
   body: string
   createdAt: number
+  userId?: string
 }
 
 // Local PouchDB instance (IndexedDB under the hood)
