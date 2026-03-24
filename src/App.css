@@ -5,6 +5,26 @@
   padding: 1rem;
 }
 
+/* ─── Update banner ─────────────────────────────────── */
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0.5rem 1rem;
+  margin-bottom: 0.5rem;
+  background: #2d4a7a;
+  color: #eee;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.update-banner:hover {
+  background: #3b5fa0;
+}
+
 .app-header {
   display: flex;
   align-items: center;

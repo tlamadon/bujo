@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { useRegisterSW } from 'virtual:pwa-register/react'
 import DailyLog from './DailyLog'
 import WeeklyLog from './WeeklyLog'
 import MonthlyLog from './MonthlyLog'
@@ -29,6 +30,10 @@ type View = 'daily' | 'weekly' | 'monthly'
 export default function App() {
   const [view, setView] = useState<View>('daily')
   const [dailyDate, setDailyDate] = useState<string | null>(null)
+  const {
+    needRefresh: [needRefresh],
+    updateServiceWorker,
+  } = useRegisterSW()
 
   const navigateToDay = useCallback((date: string) => {
     setDailyDate(date)
@@ -37,6 +42,11 @@ export default function App() {
 
   return (
     <main className="app">
+      {needRefresh && (
+        <button className="update-banner" onClick={() => updateServiceWorker(true)}>
+          Update available — tap to refresh
+        </button>
+      )}
       <div className="app-header">
         <h1 className="app-title">BuJo</h1>
         <SyncIndicator />
