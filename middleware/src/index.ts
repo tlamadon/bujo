@@ -6,7 +6,15 @@ const app = new Hono()
 
 const COUCHDB_USER = process.env.COUCHDB_USER ?? 'admin'
 const COUCHDB_PASSWORD = process.env.COUCHDB_PASSWORD ?? 'changeme'
-const COUCHDB_URL = `http://${COUCHDB_USER}:${COUCHDB_PASSWORD}@couchdb:5984`
+const COUCHDB_URL = 'http://couchdb:5984'
+const COUCHDB_AUTH = 'Basic ' + Buffer.from(`${COUCHDB_USER}:${COUCHDB_PASSWORD}`).toString('base64')
+
+function couchHeaders(contentType?: string): Record<string, string> {
+  return {
+    'Authorization': COUCHDB_AUTH,
+    'Content-Type': contentType ?? 'application/json',
+  }
+}
 
 function getUserId(c: { req: { header: (name: string) => string | undefined } }): string | null {
   return c.req.header('cf-access-authenticated-user-email') ?? null
@@ -30,7 +38,7 @@ app.post('/couchdb/bujo/_bulk_docs', async (c) => {
 
   const resp = await fetch(`${COUCHDB_URL}/bujo/_bulk_docs`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: couchHeaders(),
     body: JSON.stringify(body),
   })
   return new Response(resp.body, { status: resp.status, headers: resp.headers })
@@ -44,7 +52,7 @@ app.put('/couchdb/bujo/:docid', async (c) => {
   if (docid.startsWith('_local/')) {
     const resp = await fetch(`${COUCHDB_URL}/bujo/${encodeURIComponent(docid)}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: couchHeaders(),
       body: await c.req.text(),
     })
     return new Response(resp.body, { status: resp.status, headers: resp.headers })
@@ -58,7 +66,7 @@ app.put('/couchdb/bujo/:docid', async (c) => {
 
   const resp = await fetch(`${COUCHDB_URL}/bujo/${encodeURIComponent(docid)}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: couchHeaders(),
     body: JSON.stringify(modified),
   })
   return new Response(resp.body, { status: resp.status, headers: resp.headers })
@@ -69,11 +77,9 @@ app.all('/couchdb/*', async (c) => {
   const path = c.req.path.replace(/^\/couchdb/, '')
   const url = `${COUCHDB_URL}${path}${new URL(c.req.url).search}`
 
-  const headers: Record<string, string> = { 'Content-Type': c.req.header('content-type') ?? 'application/json' }
-
   const resp = await fetch(url, {
     method: c.req.method,
-    headers,
+    headers: couchHeaders(c.req.header('content-type')),
     body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.text(),
   })
   return new Response(resp.body, { status: resp.status, headers: resp.headers })
