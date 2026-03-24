@@ -2,7 +2,32 @@ import { useState, useCallback } from 'react'
 import DailyLog from './DailyLog'
 import WeeklyLog from './WeeklyLog'
 import MonthlyLog from './MonthlyLog'
+import { useSyncStatus } from './hooks'
+import type { SyncState } from './hooks'
 import './App.css'
+
+const syncLabels: Record<SyncState, string> = {
+  synced: 'Synced',
+  syncing: 'Syncing',
+  error: 'Sync error',
+  denied: 'Access denied',
+}
+
+function SyncIndicator() {
+  const { state, pending, error } = useSyncStatus()
+  return (
+    <div className={`sync-indicator sync-${state}`} title={error ?? syncLabels[state]}>
+      <span className="sync-dot" />
+      <span className="sync-label">
+        {state === 'error' || state === 'denied'
+          ? syncLabels[state]
+          : pending > 0
+            ? `${pending} pending`
+            : syncLabels[state]}
+      </span>
+    </div>
+  )
+}
 
 type View = 'daily' | 'weekly' | 'monthly'
 
@@ -17,7 +42,10 @@ export default function App() {
 
   return (
     <main className="app">
-      <h1 className="app-title">BuJo</h1>
+      <div className="app-header">
+        <h1 className="app-title">BuJo</h1>
+        <SyncIndicator />
+      </div>
 
       <nav className="view-nav">
         <button

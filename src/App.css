@@ -5,12 +5,55 @@
   padding: 1rem;
 }
 
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
 .app-title {
   text-align: center;
   font-family: 'Georgia', serif;
   font-size: 2rem;
   letter-spacing: 0.15em;
-  margin-bottom: 0.5rem;
+  margin: 0;
+}
+
+/* ─── Sync indicator ───────────────────────────────── */
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sync-synced .sync-dot {
+  background: #4caf50;
+}
+
+.sync-syncing .sync-dot {
+  background: #ff9800;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.sync-error .sync-dot,
+.sync-denied .sync-dot {
+  background: #f44336;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 /* ─── View navigation ───────────────────────────────── */
