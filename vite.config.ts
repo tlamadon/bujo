@@ -3,6 +3,16 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  server: {
+    proxy: {
+      '/couchdb': {
+        target: 'http://localhost:5984',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/couchdb/, ''),
+        auth: 'admin:changeme',
+      },
+    },
+  },
   plugins: [
     react(),
     VitePWA({

@@ -20,46 +20,47 @@ export function useSyncStatus(): SyncStatus {
   const [status, setStatus] = useState<SyncStatus>({ state: 'syncing', pending: 0 })
 
   useEffect(() => {
-    const updatePending = async () => {
-      try {
-        const local = await localDb.info()
-        const remote = await (await fetch(`${window.location.origin}/couchdb/bujo`)).json()
-        const diff = Math.abs(local.update_seq as number - (remote.update_seq as number))
-        return diff
-      } catch {
-        return 0
-      }
-    }
+    let changeCount = 0
 
     const onActive = () => {
-      setStatus((s) => ({ ...s, state: 'syncing' }))
+      changeCount = 0
+      setStatus({ state: 'syncing', pending: 0 })
     }
 
-    const onPaused = () => {
-      updatePending().then((pending) => {
-        setStatus({ state: pending === 0 ? 'synced' : 'syncing', pending })
-      })
+    const onChange = () => {
+      changeCount++
+      setStatus({ state: 'syncing', pending: changeCount })
+    }
+
+    // 'paused' fires when replication is caught up and idle
+    const onPaused = (err: unknown) => {
+      if (err) {
+        const msg = err instanceof Error ? err.message : 'Sync error'
+        setStatus({ state: 'error', pending: 0, error: msg })
+      } else {
+        changeCount = 0
+        setStatus({ state: 'synced', pending: 0 })
+      }
     }
 
     const onError = (err: unknown) => {
       const msg = err instanceof Error ? err.message : 'Sync error'
-      setStatus((s) => ({ state: 'error', pending: s.pending, error: msg }))
+      setStatus({ state: 'error', pending: 0, error: msg })
     }
 
     const onDenied = () => {
-      setStatus((s) => ({ state: 'denied', pending: s.pending, error: 'Access denied' }))
+      setStatus({ state: 'denied', pending: 0, error: 'Access denied' })
     }
 
     sync.on('active', onActive)
+    sync.on('change', onChange)
     sync.on('paused', onPaused)
     sync.on('error', onError)
     sync.on('denied', onDenied)
 
-    // Check initial state
-    onPaused()
-
     return () => {
       sync.removeListener('active', onActive)
+      sync.removeListener('change', onChange)
       sync.removeListener('paused', onPaused)
       sync.removeListener('error', onError)
       sync.removeListener('denied', onDenied)

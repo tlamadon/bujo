@@ -14,17 +14,11 @@ const syncLabels: Record<SyncState, string> = {
 }
 
 function SyncIndicator() {
-  const { state, pending, error } = useSyncStatus()
+  const { state, error } = useSyncStatus()
   return (
     <div className={`sync-indicator sync-${state}`} title={error ?? syncLabels[state]}>
       <span className="sync-dot" />
-      <span className="sync-label">
-        {state === 'error' || state === 'denied'
-          ? syncLabels[state]
-          : pending > 0
-            ? `${pending} pending`
-            : syncLabels[state]}
-      </span>
+      <span className="sync-label">{syncLabels[state]}</span>
     </div>
   )
 }

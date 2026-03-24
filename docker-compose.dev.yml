@@ -1,0 +1,28 @@
+services:
+  couchdb:
+    image: couchdb:3
+    restart: unless-stopped
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=changeme
+    ports:
+      - "5984:5984"
+    volumes:
+      - couchdb_data:/opt/couchdb/data
+
+  couchdb-init:
+    image: curlimages/curl:latest
+    depends_on:
+      - couchdb
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "Waiting for CouchDB..."
+        until curl -sf http://admin:changeme@couchdb:5984/ > /dev/null 2>&1; do sleep 1; done
+        echo "Creating bujo database..."
+        curl -sf -X PUT http://admin:changeme@couchdb:5984/bujo || echo "Database already exists."
+        echo "Done."
+
+volumes:
+  couchdb_data:
