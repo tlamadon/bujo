@@ -3,19 +3,10 @@ services:
     build: .
     restart: unless-stopped
     expose:
-      - "80"
-    depends_on:
-      middleware:
-        condition: service_started
-
-  middleware:
-    build: ./middleware
-    restart: unless-stopped
+      - "3000"
     environment:
       - COUCHDB_USER=${COUCHDB_USER:-admin}
       - COUCHDB_PASSWORD=${COUCHDB_PASSWORD:-changeme}
-    expose:
-      - "3000"
     depends_on:
       couchdb-init:
         condition: service_completed_successfully

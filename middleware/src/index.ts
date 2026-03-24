@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { serve } from '@hono/node-server'
+import { serveStatic } from '@hono/node-server/serve-static'
 
 const app = new Hono()
 
@@ -18,7 +19,7 @@ function injectUserId<T extends Record<string, unknown>>(doc: T, userId: string)
 }
 
 // POST /bujo/_bulk_docs — the main write path for PouchDB replication
-app.post('/bujo/_bulk_docs', async (c) => {
+app.post('/couchdb/bujo/_bulk_docs', async (c) => {
   const userId = getUserId(c)
   if (!userId) return c.json({ error: 'unauthorized' }, 401)
 
@@ -36,7 +37,7 @@ app.post('/bujo/_bulk_docs', async (c) => {
 })
 
 // PUT /bujo/{docid} — individual doc writes
-app.put('/bujo/:docid', async (c) => {
+app.put('/couchdb/bujo/:docid', async (c) => {
   const docid = c.req.param('docid')
 
   // _local/ docs are PouchDB replication checkpoints — pass through
@@ -64,8 +65,8 @@ app.put('/bujo/:docid', async (c) => {
 })
 
 // All other requests — proxy through unchanged
-app.all('/bujo/*', async (c) => {
-  const path = c.req.path
+app.all('/couchdb/*', async (c) => {
+  const path = c.req.path.replace(/^\/couchdb/, '')
   const url = `${COUCHDB_URL}${path}${new URL(c.req.url).search}`
 
   const headers: Record<string, string> = { 'Content-Type': c.req.header('content-type') ?? 'application/json' }
@@ -78,6 +79,12 @@ app.all('/bujo/*', async (c) => {
   return new Response(resp.body, { status: resp.status, headers: resp.headers })
 })
 
+// Serve static files from the built SPA
+app.use('/*', serveStatic({ root: './public' }))
+
+// SPA fallback — serve index.html for any non-file route
+app.use('/*', serveStatic({ root: './public', path: 'index.html' }))
+
 const port = Number(process.env.PORT ?? 3000)
-console.log(`Middleware listening on port ${port}`)
+console.log(`Server listening on port ${port}`)
 serve({ fetch: app.fetch, port })
