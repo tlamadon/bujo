@@ -6,10 +6,17 @@ A local-first Bullet Journal app built with React, PouchDB, and CouchDB sync.
 
 ```bash
 npm install
+docker compose -f docker-compose.dev.yml up -d
 npm run dev
 ```
 
-This starts a Vite dev server at `http://localhost:5173`. Data is stored locally in the browser (IndexedDB via PouchDB). CouchDB sync is not required for local development.
+This starts a local CouchDB instance and a Vite dev server at `http://localhost:5173`. The Vite proxy forwards `/couchdb/` requests to CouchDB so sync works out of the box.
+
+To stop CouchDB when you're done:
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
 
 ## Deploying with Docker Compose
 
@@ -37,20 +44,20 @@ docker compose up -d
 
 This starts three services:
 
-- **bujo** – Nginx serving the built frontend, proxying `/couchdb/` to CouchDB
+- **bujo** – Hono server serving the frontend and proxying `/couchdb/` to CouchDB (with userId injection from Cloudflare auth headers)
 - **couchdb** – CouchDB 3 instance with persistent storage
 - **couchdb-init** – One-shot container that waits for CouchDB to be ready and creates the `bujo` database
 - **cloudflared** – (Optional) Cloudflare Tunnel for exposing the app externally
 
 ### 3. Access the app
 
-The `bujo` service listens on port 80 inside Docker. To expose it on your host, add a port mapping in `docker-compose.yml`:
+The `bujo` service listens on port 3000 inside Docker. To expose it on your host, add a port mapping in `docker-compose.yml`:
 
 ```yaml
 services:
   bujo:
     ports:
-      - "8080:80"
+      - "8080:3000"
 ```
 
 Then visit `http://localhost:8080`.
@@ -73,7 +80,7 @@ CouchDB data is persisted in a Docker volume (`couchdb_data`), so it survives co
 ### Architecture
 
 ```
-Browser (PouchDB) <──sync──> Nginx (/couchdb/*) <──proxy──> CouchDB:5984
+Browser (PouchDB) <──sync──> Hono (/couchdb/*) <──proxy──> CouchDB:5984
                               │
                               └── Static files (Vite build)
 ```
