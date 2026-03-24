@@ -46,6 +46,10 @@
   animation: pulse 1.2s ease-in-out infinite;
 }
 
+.sync-offline .sync-dot {
+  background: #888;
+}
+
 .sync-error .sync-dot,
 .sync-denied .sync-dot {
   background: #f44336;

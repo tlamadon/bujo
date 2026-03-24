@@ -7,60 +7,74 @@ import {
   type BujoEntry,
 } from './db'
 
-export type SyncState = 'synced' | 'syncing' | 'error' | 'denied'
+export type SyncState = 'synced' | 'syncing' | 'offline' | 'error' | 'denied'
 
 export interface SyncStatus {
   state: SyncState
-  pending: number
   error?: string
+}
+
+async function checkRemote(): Promise<boolean> {
+  try {
+    const resp = await fetch(`${window.location.origin}/couchdb/bujo`, { method: 'HEAD' })
+    return resp.ok
+  } catch {
+    return false
+  }
 }
 
 /** Reactive hook: tracks PouchDB sync status */
 export function useSyncStatus(): SyncStatus {
-  const [status, setStatus] = useState<SyncStatus>({ state: 'syncing', pending: 0 })
+  const [status, setStatus] = useState<SyncStatus>({ state: 'syncing' })
 
   useEffect(() => {
-    let changeCount = 0
-
     const onActive = () => {
-      changeCount = 0
-      setStatus({ state: 'syncing', pending: 0 })
-    }
-
-    const onChange = () => {
-      changeCount++
-      setStatus({ state: 'syncing', pending: changeCount })
+      setStatus({ state: 'syncing' })
     }
 
     // 'paused' fires when replication is caught up and idle
     const onPaused = (err: unknown) => {
       if (err) {
         const msg = err instanceof Error ? err.message : 'Sync error'
-        setStatus({ state: 'error', pending: 0, error: msg })
+        checkRemote().then((reachable) => {
+          setStatus(reachable
+            ? { state: 'error', error: msg }
+            : { state: 'offline', error: 'Cannot reach server' })
+        })
       } else {
-        changeCount = 0
-        setStatus({ state: 'synced', pending: 0 })
+        checkRemote().then((reachable) => {
+          setStatus(reachable
+            ? { state: 'synced' }
+            : { state: 'offline', error: 'Cannot reach server' })
+        })
       }
     }
 
     const onError = (err: unknown) => {
       const msg = err instanceof Error ? err.message : 'Sync error'
-      setStatus({ state: 'error', pending: 0, error: msg })
+      checkRemote().then((reachable) => {
+        setStatus(reachable
+          ? { state: 'error', error: msg }
+          : { state: 'offline', error: 'Cannot reach server' })
+      })
     }
 
     const onDenied = () => {
-      setStatus({ state: 'denied', pending: 0, error: 'Access denied' })
+      setStatus({ state: 'denied', error: 'Access denied' })
     }
 
     sync.on('active', onActive)
-    sync.on('change', onChange)
     sync.on('paused', onPaused)
     sync.on('error', onError)
     sync.on('denied', onDenied)
 
+    // Check initial connectivity
+    checkRemote().then((reachable) => {
+      if (!reachable) setStatus({ state: 'offline', error: 'Cannot reach server' })
+    })
+
     return () => {
       sync.removeListener('active', onActive)
-      sync.removeListener('change', onChange)
       sync.removeListener('paused', onPaused)
       sync.removeListener('error', onError)
       sync.removeListener('denied', onDenied)

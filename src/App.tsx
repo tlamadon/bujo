@@ -9,6 +9,7 @@ import './App.css'
 const syncLabels: Record<SyncState, string> = {
   synced: 'Synced',
   syncing: 'Syncing',
+  offline: 'Offline',
   error: 'Sync error',
   denied: 'Access denied',
 }
