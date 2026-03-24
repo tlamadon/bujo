@@ -1,73 +1,81 @@
-# React + TypeScript + Vite
+# BuJo – Bullet Journal PWA
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A local-first Bullet Journal app built with React, PouchDB, and CouchDB sync.
 
-Currently, two official plugins are available:
+## Local Development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+This starts a Vite dev server at `http://localhost:5173`. Data is stored locally in the browser (IndexedDB via PouchDB). CouchDB sync is not required for local development.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Deploying with Docker Compose
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### 1. Create a `.env` file
+
+Copy the example and set your own credentials:
+
+```bash
+cp .env.example .env
 ```
+
+Edit `.env` and set a strong CouchDB password:
+
+```
+COUCHDB_USER=admin
+COUCHDB_PASSWORD=your-secure-password-here
+CLOUDFLARE_TUNNEL_TOKEN=your-tunnel-token-here
+```
+
+### 2. Start the stack
+
+```bash
+docker compose up -d
+```
+
+This starts three services:
+
+- **bujo** – Nginx serving the built frontend, proxying `/couchdb/` to CouchDB
+- **couchdb** – CouchDB 3 instance with persistent storage
+- **couchdb-init** – One-shot container that waits for CouchDB to be ready and creates the `bujo` database
+- **cloudflared** – (Optional) Cloudflare Tunnel for exposing the app externally
+
+### 3. Access the app
+
+The `bujo` service listens on port 80 inside Docker. To expose it on your host, add a port mapping in `docker-compose.yml`:
+
+```yaml
+services:
+  bujo:
+    ports:
+      - "8080:80"
+```
+
+Then visit `http://localhost:8080`.
+
+Alternatively, if you have a Cloudflare Tunnel token configured in `.env`, the app is accessible through your tunnel domain.
+
+### CouchDB credentials
+
+The CouchDB username and password are set via environment variables in `.env`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `COUCHDB_USER` | `admin` | CouchDB admin username |
+| `COUCHDB_PASSWORD` | `changeme` | CouchDB admin password |
+
+These are used by both the CouchDB container and the init script that creates the `bujo` database. **Change the default password before deploying.**
+
+CouchDB data is persisted in a Docker volume (`couchdb_data`), so it survives container restarts.
+
+### Architecture
+
+```
+Browser (PouchDB) <──sync──> Nginx (/couchdb/*) <──proxy──> CouchDB:5984
+                              │
+                              └── Static files (Vite build)
+```
+
+The frontend uses PouchDB to store data locally in IndexedDB. When CouchDB is available, PouchDB syncs bidirectionally in real-time, enabling cross-device access.
