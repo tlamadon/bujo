@@ -19,6 +19,15 @@ const STATUS_ICONS: Record<BujoStatus, string> = {
 
 const STATUS_CYCLE: BujoStatus[] = ['task', 'completed', 'note', 'event']
 
+const STATUS_ORDER: Record<BujoStatus, number> = {
+  task: 0,
+  migrated: 1,
+  scheduled: 2,
+  completed: 3,
+  note: 4,
+  event: 5,
+}
+
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 function toISODate(d: Date): string {
@@ -120,7 +129,9 @@ export default function WeeklyLog({ onNavigateToDay }: Props) {
 
       <div className="week-grid">
         {weekDates.map((date, i) => {
-          const dayEntries = byDate[date] || []
+          const dayEntries = (byDate[date] || []).slice().sort(
+            (a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status],
+          )
           const isToday = date === toISODate(new Date())
           return (
             <div key={date} className={`week-day ${isToday ? 'today' : ''}`}>

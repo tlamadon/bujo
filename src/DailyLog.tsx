@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import {
   addEntry,
   updateEntry,
@@ -20,6 +20,19 @@ const STATUS_ICONS: Record<BujoStatus, string> = {
 
 const STATUS_CYCLE: BujoStatus[] = ['task', 'completed', 'note', 'event']
 
+const STATUS_ORDER: Record<BujoStatus, number> = {
+  task: 0,
+  migrated: 1,
+  scheduled: 2,
+  completed: 3,
+  note: 4,
+  event: 5,
+}
+
+function sortEntries(entries: BujoEntry[]): BujoEntry[] {
+  return [...entries].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status])
+}
+
 function toISODate(d: Date): string {
   return d.toISOString().slice(0, 10)
 }
@@ -33,7 +46,8 @@ export default function DailyLog({ initialDate }: Props) {
   const [newBody, setNewBody] = useState('')
   const [newStatus, setNewStatus] = useState<BujoStatus>('task')
 
-  const entries = useEntriesForDate(viewDate)
+  const rawEntries = useEntriesForDate(viewDate)
+  const entries = useMemo(() => rawEntries && sortEntries(rawEntries), [rawEntries])
 
   const handleAdd = useCallback(async () => {
     const trimmed = newBody.trim()
