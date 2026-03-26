@@ -8,6 +8,7 @@ import {
   type BujoEntry,
 } from './db'
 import { useEntriesForDate } from './hooks'
+import EditableEntry from './EditableEntry'
 
 const STATUS_ICONS: Record<BujoStatus, string> = {
   task: '•',
@@ -113,21 +114,12 @@ export default function DailyLog({ initialDate }: Props) {
         ) : (
           entries.map((entry) => (
             <li key={entry._id} className={`entry status-${entry.status}`}>
-              <button
-                className="signifier"
-                onClick={() => cycleStatus(entry)}
-                title={`Status: ${entry.status} (click to cycle)`}
-              >
-                {STATUS_ICONS[entry.status]}
-              </button>
-              <span className="body">{entry.body}</span>
-              <button
-                className="delete-btn"
-                onClick={() => handleDelete(entry)}
-                aria-label="Delete"
-              >
-                &times;
-              </button>
+              <EditableEntry
+                entry={entry}
+                statusIcon={STATUS_ICONS[entry.status]}
+                onCycleStatus={cycleStatus}
+                onDelete={handleDelete}
+              />
             </li>
           ))
         )}

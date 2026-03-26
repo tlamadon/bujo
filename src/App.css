@@ -181,6 +181,19 @@
 .entry .body {
   flex: 1;
   word-break: break-word;
+  cursor: text;
+}
+
+.entry .body-edit,
+.week-entry .body-edit {
+  flex: 1;
+  font: inherit;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 2px 4px;
+  outline: none;
 }
 
 .entry.status-completed .body {
@@ -340,6 +353,7 @@
 .week-entry .body {
   flex: 1;
   word-break: break-word;
+  cursor: text;
 }
 
 .week-entry.status-completed .body {

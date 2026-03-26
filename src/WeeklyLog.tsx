@@ -7,6 +7,7 @@ import {
   type BujoEntry,
 } from './db'
 import { useEntriesForDateRange } from './hooks'
+import EditableEntry from './EditableEntry'
 
 const STATUS_ICONS: Record<BujoStatus, string> = {
   task: '•',
@@ -186,21 +187,12 @@ export default function WeeklyLog({ onNavigateToDay }: Props) {
                       key={entry._id}
                       className={`week-entry status-${entry.status}`}
                     >
-                      <button
-                        className="signifier"
-                        onClick={() => cycleStatus(entry)}
-                        title={entry.status}
-                      >
-                        {STATUS_ICONS[entry.status]}
-                      </button>
-                      <span className="body">{entry.body}</span>
-                      <button
-                        className="delete-btn"
-                        onClick={() => handleDelete(entry)}
-                        aria-label="Delete"
-                      >
-                        &times;
-                      </button>
+                      <EditableEntry
+                        entry={entry}
+                        statusIcon={STATUS_ICONS[entry.status]}
+                        onCycleStatus={cycleStatus}
+                        onDelete={handleDelete}
+                      />
                     </li>
                   ))}
                 </ul>
