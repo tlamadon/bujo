@@ -1,12 +1,14 @@
 import { useState, useMemo } from 'react'
-import { type BujoEntry, type BujoStatus } from './db'
+import { type BujoStatus, type DisplayEntry } from './db'
 import { useEntriesForDateRange } from './hooks'
+import { relativeMonthLabel } from './relativeLabel'
+import { toISODate } from './dateUtils'
 
 const STATUS_ICONS: Record<BujoStatus, string> = {
   task: '•',
   completed: '✕',
   migrated: '>',
-  scheduled: '<',
+  scheduled: '>',
   note: '–',
   event: '○',
 }
@@ -18,10 +20,6 @@ const MONTH_NAMES = [
 
 const SHORT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
-function toISODate(d: Date): string {
-  return d.toISOString().slice(0, 10)
-}
-
 function pad(n: number): string {
   return n < 10 ? `0${n}` : `${n}`
 }
@@ -29,7 +27,6 @@ function pad(n: number): string {
 /** Build a calendar grid (6 weeks max) for a given year/month */
 function buildCalendarGrid(year: number, month: number): (string | null)[][] {
   const firstDay = new Date(year, month, 1)
-  // Monday=0 ... Sunday=6
   let startDow = firstDay.getDay() - 1
   if (startDow < 0) startDow = 6
 
@@ -64,29 +61,33 @@ export default function MonthlyLog({ onNavigateToDay }: Props) {
   const lastDay = new Date(year, month + 1, 0).getDate()
   const lastDate = `${year}-${pad(month + 1)}-${pad(lastDay)}`
 
-  const entries = useEntriesForDateRange(firstDate, lastDate)
+  const rawEntries = useEntriesForDateRange(firstDate, lastDate)
 
-  // Group entries by date
+  // Group by display date (skip ghosts for calendar dots — only show real entries)
   const byDate = useMemo(() => {
-    const map: Record<string, BujoEntry[]> = {}
-    if (entries) {
-      for (const e of entries) {
-        if (!map[e.date]) map[e.date] = []
-        map[e.date].push(e)
+    const map: Record<string, DisplayEntry[]> = {}
+    if (rawEntries) {
+      for (const de of rawEntries) {
+        if (de.isGhost) continue
+        const d = de.entry.date
+        if (!map[d]) map[d] = []
+        map[d].push(de)
       }
     }
     return map
-  }, [entries])
+  }, [rawEntries])
 
   const calendarGrid = useMemo(() => buildCalendarGrid(year, month), [year, month])
 
-  // Collect open tasks and events for the task list
+  // Collect open tasks and events for the task list (exclude ghosts)
   const taskList = useMemo(() => {
-    if (!entries) return []
-    return entries.filter(
-      (e) => e.status === 'task' || e.status === 'event' || e.status === 'scheduled',
+    if (!rawEntries) return []
+    return rawEntries.filter(
+      (de) =>
+        !de.isGhost &&
+        (de.entry.status === 'task' || de.entry.status === 'event' || de.entry.status === 'scheduled'),
     )
-  }, [entries])
+  }, [rawEntries])
 
   const shiftMonth = (dir: number) => {
     setMonth((prev) => {
@@ -119,6 +120,12 @@ export default function MonthlyLog({ onNavigateToDay }: Props) {
           &rarr;
         </button>
       </header>
+      <div className="relative-label">
+        {relativeMonthLabel(year, month)}
+        {(year !== now.getFullYear() || month !== now.getMonth()) && (
+          <button className="now-btn" onClick={() => { setYear(now.getFullYear()); setMonth(now.getMonth()) }}>Now</button>
+        )}
+      </div>
 
       {/* Calendar grid */}
       <table className="month-calendar">
@@ -137,8 +144,12 @@ export default function MonthlyLog({ onNavigateToDay }: Props) {
                 const dayNum = parseInt(date.slice(-2))
                 const dayEntries = byDate[date] || []
                 const isToday = date === todayStr
-                const hasTask = dayEntries.some((e) => e.status === 'task')
-                const hasEvent = dayEntries.some((e) => e.status === 'event')
+                const hasOpen = dayEntries.some((de) => de.entry.status === 'task')
+                const hasCompleted = dayEntries.some((de) => de.entry.status === 'completed')
+                const hasRescheduled = dayEntries.some((de) => de.entry.status === 'scheduled' || de.entry.status === 'migrated')
+                const hasNote = dayEntries.some((de) => de.entry.status === 'note')
+                const hasEvent = dayEntries.some((de) => de.entry.status === 'event')
+                const hasDots = hasOpen || hasCompleted || hasRescheduled || hasNote || hasEvent
                 return (
                   <td
                     key={di}
@@ -147,9 +158,12 @@ export default function MonthlyLog({ onNavigateToDay }: Props) {
                     title={`${dayEntries.length} entries`}
                   >
                     <span className="month-day-num">{dayNum}</span>
-                    {(hasTask || hasEvent) && (
+                    {hasDots && (
                       <span className="month-dots">
-                        {hasTask && <span className="dot dot-task" />}
+                        {hasOpen && <span className="dot dot-task" />}
+                        {hasCompleted && <span className="dot dot-completed" />}
+                        {hasRescheduled && <span className="dot dot-rescheduled" />}
+                        {hasNote && <span className="dot dot-note" />}
                         {hasEvent && <span className="dot dot-event" />}
                       </span>
                     )}
@@ -161,22 +175,30 @@ export default function MonthlyLog({ onNavigateToDay }: Props) {
         </tbody>
       </table>
 
+      <div className="month-legend">
+        <span className="month-legend-item"><span className="dot dot-task" /> Open</span>
+        <span className="month-legend-item"><span className="dot dot-completed" /> Done</span>
+        <span className="month-legend-item"><span className="dot dot-rescheduled" /> Rescheduled</span>
+        <span className="month-legend-item"><span className="dot dot-note" /> Note</span>
+        <span className="month-legend-item"><span className="dot dot-event" /> Event</span>
+      </div>
+
       {/* Task list — open tasks and events this month */}
       <div className="month-task-list">
         <h3>Open tasks &amp; events</h3>
-        {entries === undefined ? (
+        {rawEntries === undefined ? (
           <p className="loading">Loading…</p>
         ) : taskList.length === 0 ? (
           <p className="empty">No open tasks or events this month.</p>
         ) : (
           <ul className="entry-list">
-            {taskList.map((entry) => (
-              <li key={entry._id} className={`entry status-${entry.status}`}>
+            {taskList.map((de) => (
+              <li key={de.entry._id} className={`entry status-${de.entry.status}`}>
                 <span className="signifier-static">
-                  {STATUS_ICONS[entry.status]}
+                  {STATUS_ICONS[de.entry.status]}
                 </span>
-                <span className="month-task-date">{entry.date.slice(5)}</span>
-                <span className="body">{entry.body}</span>
+                <span className="month-task-date">{de.entry.date.slice(5)}</span>
+                <span className="body">{de.entry.body}</span>
               </li>
             ))}
           </ul>

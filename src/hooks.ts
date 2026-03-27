@@ -4,7 +4,7 @@ import {
   sync,
   getEntriesForDate,
   getEntriesForDateRange,
-  type BujoEntry,
+  type DisplayEntry,
 } from './db'
 
 export type SyncState = 'synced' | 'syncing' | 'offline' | 'error' | 'denied'
@@ -84,9 +84,9 @@ export function useSyncStatus(): SyncStatus {
   return status
 }
 
-/** Reactive hook: all entries for a given date, auto-updates on local & remote changes */
-export function useEntriesForDate(date: string): BujoEntry[] | undefined {
-  const [entries, setEntries] = useState<BujoEntry[] | undefined>(undefined)
+/** Reactive hook: all display entries for a given date, auto-updates on local & remote changes */
+export function useEntriesForDate(date: string): DisplayEntry[] | undefined {
+  const [entries, setEntries] = useState<DisplayEntry[] | undefined>(undefined)
 
   useEffect(() => {
     let cancelled = false
@@ -110,12 +110,12 @@ export function useEntriesForDate(date: string): BujoEntry[] | undefined {
   return entries
 }
 
-/** Reactive hook: all entries in a date range [startDate, endDate] */
+/** Reactive hook: all display entries in a date range [startDate, endDate] */
 export function useEntriesForDateRange(
   startDate: string,
   endDate: string,
-): BujoEntry[] | undefined {
-  const [entries, setEntries] = useState<BujoEntry[] | undefined>(undefined)
+): DisplayEntry[] | undefined {
+  const [entries, setEntries] = useState<DisplayEntry[] | undefined>(undefined)
 
   useEffect(() => {
     let cancelled = false

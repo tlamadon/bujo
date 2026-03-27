@@ -123,6 +123,32 @@
   padding: 0.2rem 0.6rem;
 }
 
+.relative-label {
+  text-align: center;
+  font-size: 0.75rem;
+  opacity: 0.5;
+  margin: -0.4rem 0 0.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.now-btn {
+  background: none;
+  border: 1px solid currentColor;
+  color: inherit;
+  border-radius: 3px;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.7rem;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.now-btn:hover {
+  opacity: 1;
+}
+
 .log-header input[type='date'] {
   background: transparent;
   border: none;
@@ -130,6 +156,20 @@
   font-size: 1.1rem;
   font-family: inherit;
   text-align: center;
+}
+
+.date-heading label {
+  cursor: pointer;
+  position: relative;
+}
+
+.date-picker-hidden {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
 }
 
 .migrate-btn {
@@ -203,6 +243,75 @@
 .entry.status-migrated .body {
   opacity: 0.4;
   font-style: italic;
+}
+
+/* Ghost entries (rescheduled away) */
+.ghost-entry {
+  opacity: 0.45;
+}
+
+.ghost-signifier {
+  flex-shrink: 0;
+  width: 1.8rem;
+  height: 1.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  color: #888;
+}
+
+.week-entry .ghost-signifier {
+  width: 1.4rem;
+  height: 1.4rem;
+  font-size: 1rem;
+}
+
+.ghost-body {
+  flex: 1;
+  word-break: break-word;
+  font-style: italic;
+}
+
+.ghost-label {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.ghost-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ghost-link:hover {
+  opacity: 0.8;
+}
+
+.entry .edit-btn,
+.week-entry .edit-btn {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  opacity: 0.4;
+  transition: opacity 0.15s;
+}
+
+.entry:hover .edit-btn,
+.week-entry:hover .edit-btn {
+  opacity: 1;
 }
 
 .entry .delete-btn {
@@ -459,6 +568,18 @@
   background: #7aa2d4;
 }
 
+.dot-completed {
+  background: #4caf50;
+}
+
+.dot-rescheduled {
+  background: #888;
+}
+
+.dot-note {
+  background: #b39ddb;
+}
+
 .dot-event {
   background: #d4a27a;
 }
@@ -480,9 +601,259 @@
   font-size: 1rem;
 }
 
+.month-legend {
+  display: flex;
+  justify-content: center;
+  gap: 1.2rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+
+.month-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
 .month-task-date {
   flex-shrink: 0;
   font-size: 0.75rem;
   opacity: 0.5;
   width: 3rem;
+}
+
+/* ─── Task Detail Overlay ──────────────────────────── */
+.task-detail-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 100;
+}
+
+.task-detail {
+  background: #1a1a2e;
+  border: 1px solid #444;
+  border-radius: 12px 12px 0 0;
+  width: 100%;
+  max-width: 520px;
+  padding: 1.25rem;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.task-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.task-detail-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.task-detail-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1.4rem;
+  cursor: pointer;
+  padding: 0 0.3rem;
+}
+
+.task-detail-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  opacity: 0.6;
+  margin-bottom: 1rem;
+}
+
+.task-detail-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.task-detail-status label {
+  opacity: 0.6;
+}
+
+.task-detail-status-options {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.task-detail-status-option {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid #555;
+  color: inherit;
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+}
+
+.task-detail-status-option:hover {
+  opacity: 0.8;
+}
+
+.task-detail-status-option.active {
+  opacity: 1;
+  border-color: #7aa2d4;
+  background: rgba(122, 162, 212, 0.15);
+}
+
+.task-detail-body {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  border: 1px solid #555;
+  border-radius: 6px;
+  padding: 0.5rem;
+  font: inherit;
+  font-size: 0.95rem;
+  resize: vertical;
+  margin-bottom: 1rem;
+  box-sizing: border-box;
+}
+
+.task-detail-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.task-detail-save {
+  background: #2d7a4a;
+  color: #eee;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1.2rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.task-detail-save:hover {
+  background: #3a9a5e;
+}
+
+.task-detail-reschedule-toggle {
+  background: #2d4a7a;
+  color: #eee;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1.2rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.task-detail-reschedule-toggle:hover {
+  background: #3b5fa0;
+}
+
+.task-detail-delete {
+  background: none;
+  border: 1px solid #a44;
+  color: #a44;
+  border-radius: 6px;
+  padding: 0.5rem 1.2rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  margin-left: auto;
+}
+.task-detail-delete:hover {
+  background: rgba(170, 68, 68, 0.15);
+}
+
+.task-detail-reschedule {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.task-detail-reschedule label {
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.task-detail-reschedule input[type='date'] {
+  background: #2a2a3e;
+  color: inherit;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  font-family: inherit;
+}
+
+.task-detail-reschedule-confirm {
+  background: #2d4a7a;
+  color: #eee;
+  border: none;
+  border-radius: 6px;
+  padding: 0.4rem 1rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.task-detail-reschedule-confirm:hover {
+  background: #3b5fa0;
+}
+
+.task-detail-reschedule-hint {
+  width: 100%;
+  font-size: 0.75rem;
+  opacity: 0.5;
+  margin: 0.25rem 0 0;
+}
+
+/* Task detail history */
+.task-detail-history {
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.task-detail-history label {
+  opacity: 0.6;
+  display: block;
+  margin-bottom: 0.3rem;
+}
+
+.task-detail-history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.task-detail-history-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0;
+  opacity: 0.5;
+}
+
+.task-detail-history-current {
+  opacity: 1 !important;
+}
+
+.task-detail-history-current em {
+  font-size: 0.75rem;
+  opacity: 0.5;
 }

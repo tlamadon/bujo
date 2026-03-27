@@ -2,18 +2,21 @@ import { useState, useCallback, useMemo } from 'react'
 import {
   addEntry,
   updateEntry,
-  deleteEntry,
+
   type BujoStatus,
   type BujoEntry,
+  type DisplayEntry,
 } from './db'
 import { useEntriesForDateRange } from './hooks'
 import EditableEntry from './EditableEntry'
+import { relativeWeekLabel } from './relativeLabel'
+import { toISODate, parseDate } from './dateUtils'
 
 const STATUS_ICONS: Record<BujoStatus, string> = {
   task: '•',
   completed: '✕',
   migrated: '>',
-  scheduled: '<',
+  scheduled: '>',
   note: '–',
   event: '○',
 }
@@ -30,10 +33,6 @@ const STATUS_ORDER: Record<BujoStatus, number> = {
 }
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-
-function toISODate(d: Date): string {
-  return d.toISOString().slice(0, 10)
-}
 
 /** Get the Monday of the week containing `date` */
 function getMonday(date: Date): Date {
@@ -53,31 +52,34 @@ function getWeekDates(monday: Date): string[] {
 }
 
 function formatShortDate(iso: string): string {
-  const d = new Date(iso + 'T00:00:00')
+  const d = parseDate(iso)
   return `${d.getDate()}/${d.getMonth() + 1}`
 }
 
 interface Props {
   onNavigateToDay: (date: string) => void
+  onOpenDetail?: (entry: BujoEntry) => void
 }
 
-export default function WeeklyLog({ onNavigateToDay }: Props) {
+export default function WeeklyLog({ onNavigateToDay, onOpenDetail }: Props) {
   const [weekStart, setWeekStart] = useState(() => getMonday(new Date()))
 
   const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart])
-  const entries = useEntriesForDateRange(weekDates[0], weekDates[6])
+  const rawEntries = useEntriesForDateRange(weekDates[0], weekDates[6])
 
-  // Group entries by date
+  // Group display entries by the date they appear on
   const byDate = useMemo(() => {
-    const map: Record<string, BujoEntry[]> = {}
+    const map: Record<string, DisplayEntry[]> = {}
     for (const d of weekDates) map[d] = []
-    if (entries) {
-      for (const e of entries) {
-        if (map[e.date]) map[e.date].push(e)
+    if (rawEntries) {
+      for (const de of rawEntries) {
+        // For ghosts, the ghost's date field tells us which day it appears on
+        const displayDate = de.isGhost ? de.ghostDoc!.date : de.entry.date
+        if (map[displayDate]) map[displayDate].push(de)
       }
     }
     return map
-  }, [entries, weekDates])
+  }, [rawEntries, weekDates])
 
   const shiftWeek = (dir: number) => {
     setWeekStart((prev) => {
@@ -91,10 +93,6 @@ export default function WeeklyLog({ onNavigateToDay }: Props) {
     const idx = STATUS_CYCLE.indexOf(entry.status)
     const next = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length]
     await updateEntry(entry, { status: next })
-  }, [])
-
-  const handleDelete = useCallback(async (entry: BujoEntry) => {
-    await deleteEntry(entry)
   }, [])
 
   // Quick-add state per day
@@ -127,12 +125,21 @@ export default function WeeklyLog({ onNavigateToDay }: Props) {
           &rarr;
         </button>
       </header>
+      <div className="relative-label">
+        {relativeWeekLabel(weekStart)}
+        {relativeWeekLabel(weekStart) !== 'this week' && (
+          <button className="now-btn" onClick={() => setWeekStart(getMonday(new Date()))}>Now</button>
+        )}
+      </div>
 
       <div className="week-grid">
         {weekDates.map((date, i) => {
-          const dayEntries = (byDate[date] || []).slice().sort(
-            (a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status],
-          )
+          const dayEntries = (byDate[date] || []).slice().sort((a, b) => {
+            const orderA = a.isGhost ? 3.5 : STATUS_ORDER[a.entry.status]
+            const orderB = b.isGhost ? 3.5 : STATUS_ORDER[b.entry.status]
+            if (orderA !== orderB) return orderA - orderB
+            return a.entry.createdAt - b.entry.createdAt
+          })
           const isToday = date === toISODate(new Date())
           return (
             <div key={date} className={`week-day ${isToday ? 'today' : ''}`}>
@@ -176,23 +183,38 @@ export default function WeeklyLog({ onNavigateToDay }: Props) {
                 </form>
               )}
 
-              {entries === undefined ? (
+              {rawEntries === undefined ? (
                 <div className="loading">…</div>
               ) : dayEntries.length === 0 ? (
                 <div className="week-empty">—</div>
               ) : (
                 <ul className="week-entries">
-                  {dayEntries.map((entry) => (
+                  {dayEntries.map((de) => (
                     <li
-                      key={entry._id}
-                      className={`week-entry status-${entry.status}`}
+                      key={de.isGhost ? `ghost-${de.ghostDoc?._id}` : de.entry._id}
+                      className={`week-entry ${de.isGhost ? 'status-scheduled ghost-entry' : `status-${de.entry.status}`}`}
                     >
-                      <EditableEntry
-                        entry={entry}
-                        statusIcon={STATUS_ICONS[entry.status]}
-                        onCycleStatus={cycleStatus}
-                        onDelete={handleDelete}
-                      />
+                      {de.isGhost ? (
+                        <button
+                          className="ghost-link"
+                          onClick={() => setWeekStart(getMonday(parseDate(de.entry.date)))}
+                          title={`Rescheduled to ${de.entry.date} — click to go there`}
+                        >
+                          <span className="signifier ghost-signifier">&gt;</span>
+                          <span className="body ghost-body">
+                            {de.entry.body}
+                          </span>
+                          <span className="ghost-label">→ {de.entry.date}</span>
+                        </button>
+                      ) : (
+                        <EditableEntry
+                          entry={de.entry}
+                          statusIcon={STATUS_ICONS[de.entry.status]}
+                          onCycleStatus={cycleStatus}
+
+                          onOpenDetail={onOpenDetail}
+                        />
+                      )}
                     </li>
                   ))}
                 </ul>

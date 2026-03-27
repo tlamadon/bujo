@@ -4,8 +4,10 @@ import { useRegisterSW } from 'virtual:pwa-register/react'
 import DailyLog from './DailyLog'
 import WeeklyLog from './WeeklyLog'
 import MonthlyLog from './MonthlyLog'
+import TaskDetail from './TaskDetail'
 import { useSyncStatus } from './hooks'
 import type { SyncState } from './hooks'
+import type { BujoEntry } from './db'
 import './App.css'
 
 const syncLabels: Record<SyncState, string> = {
@@ -31,11 +33,20 @@ type View = 'daily' | 'weekly' | 'monthly'
 export default function App() {
   const [view, setView] = useState<View>('daily')
   const [dailyDate, setDailyDate] = useState<string | null>(null)
+  const [detailEntry, setDetailEntry] = useState<BujoEntry | null>(null)
   useRegisterSW()
 
   const navigateToDay = useCallback((date: string) => {
     setDailyDate(date)
     setView('daily')
+  }, [])
+
+  const openDetail = useCallback((entry: BujoEntry) => {
+    setDetailEntry(entry)
+  }, [])
+
+  const closeDetail = useCallback(() => {
+    setDetailEntry(null)
   }, [])
 
   return (
@@ -66,9 +77,11 @@ export default function App() {
         </button>
       </nav>
 
-      {view === 'daily' && <DailyLog initialDate={dailyDate} />}
-      {view === 'weekly' && <WeeklyLog onNavigateToDay={navigateToDay} />}
+      {view === 'daily' && <DailyLog initialDate={dailyDate} onOpenDetail={openDetail} />}
+      {view === 'weekly' && <WeeklyLog onNavigateToDay={navigateToDay} onOpenDetail={openDetail} />}
       {view === 'monthly' && <MonthlyLog onNavigateToDay={navigateToDay} />}
+
+      {detailEntry && <TaskDetail entry={detailEntry} onClose={closeDetail} />}
     </main>
   )
 }

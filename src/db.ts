@@ -5,7 +5,7 @@ export type BujoStatus =
   | 'task'       // • (bullet)
   | 'completed'  // ✕
   | 'migrated'   // > (moved forward)
-  | 'scheduled'  // < (moved to future log)
+  | 'scheduled'  // > (moved to future log)
   | 'note'       // – (dash)
   | 'event'      // ○ (circle)
 
@@ -13,20 +13,34 @@ export interface BujoEntry {
   _id: string
   _rev?: string
   type: 'entry'
-  /** ISO date string YYYY-MM-DD */
+  /** ISO date string YYYY-MM-DD — the current active date */
   date: string
   status: BujoStatus
   body: string
   createdAt: number
   userId?: string
+  /** Previous dates this entry was scheduled on (oldest first) */
+  dateHistory?: string[]
 }
 
+export interface GhostEntry {
+  _id: string
+  _rev?: string
+  type: 'ghost'
+  /** The date this ghost appears on */
+  date: string
+  /** The _id of the parent BujoEntry */
+  ref: string
+}
+
+type AnyDoc = BujoEntry | GhostEntry
+
 // Local PouchDB instance (IndexedDB under the hood)
-export const localDb = new PouchDB<BujoEntry>('bujo')
+export const localDb = new PouchDB<AnyDoc>('bujo')
 
 // Remote CouchDB – resolve URL relative to current origin
 const remoteUrl = `${window.location.origin}/couchdb/bujo`
-export const remoteDb = new PouchDB<BujoEntry>(remoteUrl)
+export const remoteDb = new PouchDB<AnyDoc>(remoteUrl)
 
 // Start live bidirectional sync
 export const sync = localDb.sync(remoteDb, {
@@ -37,6 +51,10 @@ export const sync = localDb.sync(remoteDb, {
 // Helper: generate a sortable unique ID (date-prefix for range queries)
 export function makeId(date: string): string {
   return `${date}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
+}
+
+function makeGhostId(date: string, ref: string): string {
+  return `ghost:${date}:${ref}`
 }
 
 // ─── CRUD helpers ──────────────────────────────────────────────────
@@ -64,61 +82,173 @@ export async function updateEntry(
 }
 
 export async function deleteEntry(entry: BujoEntry): Promise<void> {
+  // Delete ghosts that reference this entry
+  const ghosts = await getGhostsForRef(entry._id)
+  const ops: AnyDoc[] = ghosts.map((g) => ({ ...g, _deleted: true }) as any)
+  if (ops.length > 0) await localDb.bulkDocs(ops)
   await localDb.remove(entry._id, entry._rev!)
 }
 
-export async function getEntriesForDate(date: string): Promise<BujoEntry[]> {
+// ─── Reschedule ──────────────────────────────────────────────────
+
+/**
+ * Reschedule an entry to a new date.
+ * - Creates a ghost on the old date (so it shows as ">" there)
+ * - Deletes the old entry and creates a new one with a new _id
+ *   keyed to the new date (so allDocs range queries find it)
+ * - Preserves dateHistory on the new entry
+ */
+export async function rescheduleEntry(
+  entry: BujoEntry,
+  newDate: string,
+): Promise<void> {
+  const oldDate = entry.date
+  const history = [...(entry.dateHistory || []), oldDate]
+  const newId = makeId(newDate)
+
+  // Create the new entry on the new date
+  await localDb.put({
+    _id: newId,
+    type: 'entry',
+    date: newDate,
+    status: entry.status,
+    body: entry.body,
+    createdAt: entry.createdAt,
+    dateHistory: history,
+  })
+
+  // Create a ghost on the old date pointing to the NEW entry
+  await localDb.put({
+    _id: makeGhostId(oldDate, newId),
+    type: 'ghost',
+    date: oldDate,
+    ref: newId,
+  })
+
+  // Update any existing ghosts that pointed to the old entry
+  const oldGhosts = await getGhostsForRef(entry._id)
+  if (oldGhosts.length > 0) {
+    const updates = oldGhosts.map((g) => ({ ...g, ref: newId }))
+    await localDb.bulkDocs(updates)
+  }
+
+  // Delete the old entry
+  await localDb.remove(entry._id, entry._rev!)
+}
+
+// ─── Query helpers ───────────────────────────────────────────────
+
+async function getGhostsForRef(ref: string): Promise<GhostEntry[]> {
+  const result = await localDb.allDocs({ include_docs: true, startkey: 'ghost:', endkey: 'ghost:\ufff0' })
+  return result.rows
+    .map((r) => r.doc!)
+    .filter((d): d is GhostEntry => d.type === 'ghost' && d.ref === ref)
+}
+
+async function getGhostsForDate(date: string): Promise<GhostEntry[]> {
   const result = await localDb.allDocs({
+    include_docs: true,
+    startkey: `ghost:${date}:`,
+    endkey: `ghost:${date}:\ufff0`,
+  })
+  return result.rows
+    .map((r) => r.doc!)
+    .filter((d): d is GhostEntry => d.type === 'ghost')
+}
+
+async function getGhostsForDateRange(startDate: string, endDate: string): Promise<GhostEntry[]> {
+  const result = await localDb.allDocs({
+    include_docs: true,
+    startkey: `ghost:${startDate}:`,
+    endkey: `ghost:${endDate}:\ufff0`,
+  })
+  return result.rows
+    .map((r) => r.doc!)
+    .filter((d): d is GhostEntry => d.type === 'ghost')
+}
+
+/** Resolve a ghost to its parent entry, or null if parent was deleted */
+export async function resolveGhost(ghost: GhostEntry): Promise<BujoEntry | null> {
+  try {
+    const doc = await localDb.get(ghost.ref)
+    return doc.type === 'entry' ? doc as BujoEntry : null
+  } catch {
+    return null
+  }
+}
+
+export interface DisplayEntry {
+  entry: BujoEntry
+  /** If this is a ghost appearance (rescheduled away from this date) */
+  isGhost: boolean
+  ghostDoc?: GhostEntry
+}
+
+export async function getEntriesForDate(date: string): Promise<DisplayEntry[]> {
+  // Get real entries by _id prefix
+  const entryResult = await localDb.allDocs({
     include_docs: true,
     startkey: `${date}:`,
     endkey: `${date}:\ufff0`,
   })
-  return result.rows
+  const entries: DisplayEntry[] = entryResult.rows
     .map((r) => r.doc!)
-    .filter((d) => d.type === 'entry')
-    .sort((a, b) => a.createdAt - b.createdAt)
+    .filter((d): d is BujoEntry => d.type === 'entry')
+    .map((entry) => ({ entry, isGhost: false }))
+
+  // Get ghosts for this date and resolve them
+  const ghosts = await getGhostsForDate(date)
+  for (const ghost of ghosts) {
+    const parent = await resolveGhost(ghost)
+    if (parent) {
+      entries.push({ entry: parent, isGhost: true, ghostDoc: ghost })
+    }
+  }
+
+  entries.sort((a, b) => a.entry.createdAt - b.entry.createdAt)
+  return entries
 }
 
 export async function getEntriesForDateRange(
   startDate: string,
   endDate: string,
-): Promise<BujoEntry[]> {
-  const result = await localDb.allDocs({
+): Promise<DisplayEntry[]> {
+  // Get real entries by _id prefix range
+  const entryResult = await localDb.allDocs({
     include_docs: true,
     startkey: `${startDate}:`,
     endkey: `${endDate}:\ufff0`,
   })
-  return result.rows
+  const entries: DisplayEntry[] = entryResult.rows
     .map((r) => r.doc!)
-    .filter((d) => d.type === 'entry')
-    .sort((a, b) => a.createdAt - b.createdAt)
+    .filter((d): d is BujoEntry => d.type === 'entry')
+    .map((entry) => ({ entry, isGhost: false }))
+
+  // Get ghosts for this date range and resolve them
+  const ghosts = await getGhostsForDateRange(startDate, endDate)
+  for (const ghost of ghosts) {
+    const parent = await resolveGhost(ghost)
+    if (parent) {
+      entries.push({ entry: parent, isGhost: true, ghostDoc: ghost })
+    }
+  }
+
+  entries.sort((a, b) => a.entry.createdAt - b.entry.createdAt)
+  return entries
 }
 
 // ─── Migration Logic ───────────────────────────────────────────────
 
 export async function migrateOpenTasks(today: string): Promise<number> {
-  // Get all docs and filter for stale open tasks
   const result = await localDb.allDocs({ include_docs: true })
   const stale = result.rows
     .map((r) => r.doc!)
-    .filter((d) => d.type === 'entry' && d.status === 'task' && d.date < today)
+    .filter((d): d is BujoEntry => d.type === 'entry' && d.status === 'task' && d.date < today)
 
   if (stale.length === 0) return 0
 
-  const ops: PouchDB.Core.PutDocument<BujoEntry>[] = []
   for (const entry of stale) {
-    // Mark old entry as migrated
-    ops.push({ ...entry, status: 'migrated' as BujoStatus })
-    // Create new entry for today
-    ops.push({
-      _id: makeId(today),
-      type: 'entry',
-      date: today,
-      status: 'task',
-      body: entry.body,
-      createdAt: Date.now(),
-    })
+    await rescheduleEntry(entry, today)
   }
-  await localDb.bulkDocs(ops)
   return stale.length
 }

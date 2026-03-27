@@ -2,19 +2,22 @@ import { useState, useCallback, useMemo } from 'react'
 import {
   addEntry,
   updateEntry,
-  deleteEntry,
+
   migrateOpenTasks,
   type BujoStatus,
   type BujoEntry,
+  type DisplayEntry,
 } from './db'
 import { useEntriesForDate } from './hooks'
 import EditableEntry from './EditableEntry'
+import { relativeDayLabel } from './relativeLabel'
+import { toISODate, parseDate } from './dateUtils'
 
 const STATUS_ICONS: Record<BujoStatus, string> = {
   task: '•',
   completed: '✕',
   migrated: '>',
-  scheduled: '<',
+  scheduled: '>',
   note: '–',
   event: '○',
 }
@@ -30,25 +33,37 @@ const STATUS_ORDER: Record<BujoStatus, number> = {
   event: 5,
 }
 
-function sortEntries(entries: BujoEntry[]): BujoEntry[] {
-  return [...entries].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status])
+function sortDisplayEntries(entries: DisplayEntry[]): DisplayEntry[] {
+  return [...entries].sort((a, b) => {
+    // Ghosts (rescheduled away) always go after completed but before notes
+    const orderA = a.isGhost ? 3.5 : STATUS_ORDER[a.entry.status]
+    const orderB = b.isGhost ? 3.5 : STATUS_ORDER[b.entry.status]
+    if (orderA !== orderB) return orderA - orderB
+    return a.entry.createdAt - b.entry.createdAt
+  })
 }
 
-function toISODate(d: Date): string {
-  return d.toISOString().slice(0, 10)
+function formatDailyDate(iso: string): string {
+  const d = parseDate(iso)
+  const day = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+  if (d.getFullYear() !== new Date().getFullYear()) {
+    return `${day}, ${d.getFullYear()}`
+  }
+  return day
 }
 
 interface Props {
   initialDate?: string | null
+  onOpenDetail?: (entry: BujoEntry) => void
 }
 
-export default function DailyLog({ initialDate }: Props) {
+export default function DailyLog({ initialDate, onOpenDetail }: Props) {
   const [viewDate, setViewDate] = useState(() => initialDate || toISODate(new Date()))
   const [newBody, setNewBody] = useState('')
   const [newStatus, setNewStatus] = useState<BujoStatus>('task')
 
   const rawEntries = useEntriesForDate(viewDate)
-  const entries = useMemo(() => rawEntries && sortEntries(rawEntries), [rawEntries])
+  const entries = useMemo(() => rawEntries && sortDisplayEntries(rawEntries), [rawEntries])
 
   const handleAdd = useCallback(async () => {
     const trimmed = newBody.trim()
@@ -64,10 +79,6 @@ export default function DailyLog({ initialDate }: Props) {
     await updateEntry(entry, { status: next })
   }, [])
 
-  const handleDelete = useCallback(async (entry: BujoEntry) => {
-    await deleteEntry(entry)
-  }, [])
-
   const handleMigrate = useCallback(async () => {
     const today = toISODate(new Date())
     const count = await migrateOpenTasks(today)
@@ -80,7 +91,7 @@ export default function DailyLog({ initialDate }: Props) {
   }, [])
 
   const shiftDate = (days: number) => {
-    const d = new Date(viewDate + 'T00:00:00')
+    const d = parseDate(viewDate)
     d.setDate(d.getDate() + days)
     setViewDate(toISODate(d))
   }
@@ -90,15 +101,25 @@ export default function DailyLog({ initialDate }: Props) {
       {/* Header */}
       <header className="log-header">
         <button onClick={() => shiftDate(-1)} aria-label="Previous day">&larr;</button>
-        <h2>
-          <input
-            type="date"
-            value={viewDate}
-            onChange={(e) => setViewDate(e.target.value)}
-          />
+        <h2 className="date-heading">
+          <label>
+            {formatDailyDate(viewDate)}
+            <input
+              type="date"
+              value={viewDate}
+              onChange={(e) => setViewDate(e.target.value)}
+              className="date-picker-hidden"
+            />
+          </label>
         </h2>
         <button onClick={() => shiftDate(1)} aria-label="Next day">&rarr;</button>
       </header>
+      <div className="relative-label">
+        {relativeDayLabel(viewDate)}
+        {viewDate !== toISODate(new Date()) && (
+          <button className="now-btn" onClick={() => setViewDate(toISODate(new Date()))}>Now</button>
+        )}
+      </div>
 
       {/* Migration action */}
       <button className="migrate-btn" onClick={handleMigrate}>
@@ -112,14 +133,32 @@ export default function DailyLog({ initialDate }: Props) {
         ) : entries.length === 0 ? (
           <li className="empty">No entries for this day.</li>
         ) : (
-          entries.map((entry) => (
-            <li key={entry._id} className={`entry status-${entry.status}`}>
-              <EditableEntry
-                entry={entry}
-                statusIcon={STATUS_ICONS[entry.status]}
-                onCycleStatus={cycleStatus}
-                onDelete={handleDelete}
-              />
+          entries.map((de) => (
+            <li
+              key={de.isGhost ? `ghost-${de.ghostDoc?._id}` : de.entry._id}
+              className={`entry ${de.isGhost ? 'status-scheduled ghost-entry' : `status-${de.entry.status}`}`}
+            >
+              {de.isGhost ? (
+                <button
+                  className="ghost-link"
+                  onClick={() => setViewDate(de.entry.date)}
+                  title={`Rescheduled to ${de.entry.date} — click to go there`}
+                >
+                  <span className="signifier ghost-signifier">&gt;</span>
+                  <span className="body ghost-body">
+                    {de.entry.body}
+                  </span>
+                  <span className="ghost-label">→ {de.entry.date}</span>
+                </button>
+              ) : (
+                <EditableEntry
+                  entry={de.entry}
+                  statusIcon={STATUS_ICONS[de.entry.status]}
+                  onCycleStatus={cycleStatus}
+
+                  onOpenDetail={onOpenDetail}
+                />
+              )}
             </li>
           ))
         )}

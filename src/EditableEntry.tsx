@@ -5,10 +5,10 @@ interface Props {
   entry: BujoEntry
   statusIcon: string
   onCycleStatus: (entry: BujoEntry) => void
-  onDelete: (entry: BujoEntry) => void
+  onOpenDetail?: (entry: BujoEntry) => void
 }
 
-export default function EditableEntry({ entry, statusIcon, onCycleStatus, onDelete }: Props) {
+export default function EditableEntry({ entry, statusIcon, onCycleStatus, onOpenDetail }: Props) {
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -62,13 +62,16 @@ export default function EditableEntry({ entry, statusIcon, onCycleStatus, onDele
           {entry.body}
         </span>
       )}
-      <button
-        className="delete-btn"
-        onClick={() => onDelete(entry)}
-        aria-label="Delete"
-      >
-        &times;
-      </button>
+      {onOpenDetail && (
+        <button
+          className="edit-btn"
+          onClick={() => onOpenDetail(entry)}
+          aria-label="Edit details"
+          title="Edit details"
+        >
+          &#9998;
+        </button>
+      )}
     </>
   )
 }
