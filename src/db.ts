@@ -141,8 +141,8 @@ export async function rescheduleEntry(
 async function getGhostsForRef(ref: string): Promise<GhostEntry[]> {
   const result = await localDb.allDocs({ include_docs: true, startkey: 'ghost:', endkey: 'ghost:\ufff0' })
   return result.rows
-    .map((r) => r.doc!)
-    .filter((d): d is GhostEntry => d.type === 'ghost' && d.ref === ref)
+    .map((r) => r.doc! as AnyDoc)
+    .filter((d) => d.type === 'ghost' && (d as GhostEntry).ref === ref) as GhostEntry[]
 }
 
 async function getGhostsForDate(date: string): Promise<GhostEntry[]> {
@@ -152,8 +152,8 @@ async function getGhostsForDate(date: string): Promise<GhostEntry[]> {
     endkey: `ghost:${date}:\ufff0`,
   })
   return result.rows
-    .map((r) => r.doc!)
-    .filter((d): d is GhostEntry => d.type === 'ghost')
+    .map((r) => r.doc! as AnyDoc)
+    .filter((d) => d.type === 'ghost') as GhostEntry[]
 }
 
 async function getGhostsForDateRange(startDate: string, endDate: string): Promise<GhostEntry[]> {
@@ -163,8 +163,8 @@ async function getGhostsForDateRange(startDate: string, endDate: string): Promis
     endkey: `ghost:${endDate}:\ufff0`,
   })
   return result.rows
-    .map((r) => r.doc!)
-    .filter((d): d is GhostEntry => d.type === 'ghost')
+    .map((r) => r.doc! as AnyDoc)
+    .filter((d) => d.type === 'ghost') as GhostEntry[]
 }
 
 /** Resolve a ghost to its parent entry, or null if parent was deleted */
@@ -192,9 +192,9 @@ export async function getEntriesForDate(date: string): Promise<DisplayEntry[]> {
     endkey: `${date}:\ufff0`,
   })
   const entries: DisplayEntry[] = entryResult.rows
-    .map((r) => r.doc!)
-    .filter((d): d is BujoEntry => d.type === 'entry')
-    .map((entry) => ({ entry, isGhost: false }))
+    .map((r) => r.doc! as AnyDoc)
+    .filter((d) => d.type === 'entry')
+    .map((entry) => ({ entry: entry as BujoEntry, isGhost: false as const }))
 
   // Get ghosts for this date and resolve them
   const ghosts = await getGhostsForDate(date)
@@ -220,9 +220,9 @@ export async function getEntriesForDateRange(
     endkey: `${endDate}:\ufff0`,
   })
   const entries: DisplayEntry[] = entryResult.rows
-    .map((r) => r.doc!)
-    .filter((d): d is BujoEntry => d.type === 'entry')
-    .map((entry) => ({ entry, isGhost: false }))
+    .map((r) => r.doc! as AnyDoc)
+    .filter((d) => d.type === 'entry')
+    .map((entry) => ({ entry: entry as BujoEntry, isGhost: false as const }))
 
   // Get ghosts for this date range and resolve them
   const ghosts = await getGhostsForDateRange(startDate, endDate)
@@ -242,8 +242,8 @@ export async function getEntriesForDateRange(
 export async function migrateOpenTasks(today: string): Promise<number> {
   const result = await localDb.allDocs({ include_docs: true })
   const stale = result.rows
-    .map((r) => r.doc!)
-    .filter((d): d is BujoEntry => d.type === 'entry' && d.status === 'task' && d.date < today)
+    .map((r) => r.doc! as AnyDoc)
+    .filter((d) => d.type === 'entry' && (d as BujoEntry).status === 'task' && d.date < today) as BujoEntry[]
 
   if (stale.length === 0) return 0
 
