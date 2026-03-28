@@ -9,11 +9,19 @@ export type BujoStatus =
   | 'note'       // – (dash)
   | 'event'      // ○ (circle)
 
+/** Special date values (sort after ISO dates via ~ prefix) */
+export const UNSCHEDULED = '~unscheduled'
+
+/** Check whether a date value is a real calendar date */
+export function isScheduledDate(date: string): boolean {
+  return !date.startsWith('~')
+}
+
 export interface BujoEntry {
   _id: string
   _rev?: string
   type: 'entry'
-  /** ISO date string YYYY-MM-DD — the current active date */
+  /** ISO date string YYYY-MM-DD, or a special value like UNSCHEDULED */
   date: string
   status: BujoStatus
   body: string
@@ -21,6 +29,16 @@ export interface BujoEntry {
   userId?: string
   /** Previous dates this entry was scheduled on (oldest first) */
   dateHistory?: string[]
+  /** Tags extracted from body text (e.g. #work, #home) */
+  tags?: string[]
+}
+
+export interface TagDoc {
+  _id: string
+  _rev?: string
+  type: 'tag'
+  name: string
+  color: string
 }
 
 export interface GhostEntry {
@@ -33,7 +51,7 @@ export interface GhostEntry {
   ref: string
 }
 
-type AnyDoc = BujoEntry | GhostEntry
+type AnyDoc = BujoEntry | GhostEntry | TagDoc
 
 // Local PouchDB instance (IndexedDB under the hood)
 export const localDb = new PouchDB<AnyDoc>('bujo')
@@ -57,6 +75,93 @@ function makeGhostId(date: string, ref: string): string {
   return `ghost:${date}:${ref}`
 }
 
+// ─── Tag helpers ───────────────────────────────────────────────────
+
+/** Extract #tags from body text. Returns lowercase, deduplicated tag names. */
+export function parseTags(body: string): string[] {
+  const matches = body.match(/#([a-zA-Z0-9_-]+)/g)
+  if (!matches) return []
+  const tags = [...new Set(matches.map((m) => m.slice(1).toLowerCase()))]
+  return tags
+}
+
+/** Return body text with #tags stripped out and trimmed. */
+export function stripTags(body: string): string {
+  return body.replace(/#[a-zA-Z0-9_-]+/g, '').replace(/\s{2,}/g, ' ').trim()
+}
+
+const DEFAULT_TAG_COLORS = [
+  '#7aa2d4', '#d4a27a', '#b39ddb', '#4caf50', '#e57373',
+  '#4dd0e1', '#fff176', '#a1887f', '#90a4ae', '#f48fb1',
+]
+
+function makeTagId(name: string): string {
+  return `tag:${name.toLowerCase()}`
+}
+
+export async function getTag(name: string): Promise<TagDoc | null> {
+  try {
+    const doc = await localDb.get(makeTagId(name))
+    return doc.type === 'tag' ? (doc as TagDoc) : null
+  } catch {
+    return null
+  }
+}
+
+export async function getAllTags(): Promise<TagDoc[]> {
+  const result = await localDb.allDocs({
+    include_docs: true,
+    startkey: 'tag:',
+    endkey: 'tag:\ufff0',
+  })
+  return result.rows
+    .map((r) => r.doc! as AnyDoc)
+    .filter((d) => d.type === 'tag') as TagDoc[]
+}
+
+export async function setTagColor(name: string, color: string): Promise<void> {
+  const id = makeTagId(name)
+  try {
+    const existing = await localDb.get(id)
+    await localDb.put({ ...existing, color } as TagDoc)
+  } catch {
+    await localDb.put({
+      _id: id,
+      type: 'tag',
+      name: name.toLowerCase(),
+      color,
+    } as TagDoc)
+  }
+}
+
+/** Ensure tag docs exist for all given tag names (auto-assign colors) */
+async function ensureTagDocs(tags: string[]): Promise<void> {
+  const existing = await getAllTags()
+  const existingNames = new Set(existing.map((t) => t.name))
+  for (const tag of tags) {
+    if (!existingNames.has(tag)) {
+      const colorIdx = (existing.length + tags.indexOf(tag)) % DEFAULT_TAG_COLORS.length
+      await localDb.put({
+        _id: makeTagId(tag),
+        type: 'tag',
+        name: tag,
+        color: DEFAULT_TAG_COLORS[colorIdx],
+      } as TagDoc)
+    }
+  }
+}
+
+export async function getEntriesForTag(tagName: string): Promise<BujoEntry[]> {
+  const result = await localDb.allDocs({ include_docs: true })
+  return result.rows
+    .map((r) => r.doc! as AnyDoc)
+    .filter(
+      (d) =>
+        d.type === 'entry' &&
+        (d as BujoEntry).tags?.includes(tagName.toLowerCase()),
+    ) as BujoEntry[]
+}
+
 // ─── CRUD helpers ──────────────────────────────────────────────────
 
 export async function addEntry(
@@ -64,6 +169,8 @@ export async function addEntry(
   status: BujoStatus,
   body: string,
 ): Promise<void> {
+  const tags = parseTags(body)
+  if (tags.length > 0) await ensureTagDocs(tags)
   await localDb.put({
     _id: makeId(date),
     type: 'entry',
@@ -71,6 +178,7 @@ export async function addEntry(
     status,
     body,
     createdAt: Date.now(),
+    ...(tags.length > 0 ? { tags } : {}),
   })
 }
 
@@ -78,7 +186,11 @@ export async function updateEntry(
   entry: BujoEntry,
   fields: Partial<Pick<BujoEntry, 'status' | 'body' | 'date'>>,
 ): Promise<void> {
-  await localDb.put({ ...entry, ...fields })
+  const merged = { ...entry, ...fields }
+  const tags = parseTags(merged.body)
+  if (tags.length > 0) await ensureTagDocs(tags)
+  merged.tags = tags.length > 0 ? tags : undefined
+  await localDb.put(merged)
 }
 
 export async function deleteEntry(entry: BujoEntry): Promise<void> {
@@ -115,15 +227,18 @@ export async function rescheduleEntry(
     body: entry.body,
     createdAt: entry.createdAt,
     dateHistory: history,
+    ...(entry.tags && entry.tags.length > 0 ? { tags: entry.tags } : {}),
   })
 
-  // Create a ghost on the old date pointing to the NEW entry
-  await localDb.put({
-    _id: makeGhostId(oldDate, newId),
-    type: 'ghost',
-    date: oldDate,
-    ref: newId,
-  })
+  // Create a ghost on the old date pointing to the NEW entry (skip for special dates)
+  if (isScheduledDate(oldDate)) {
+    await localDb.put({
+      _id: makeGhostId(oldDate, newId),
+      type: 'ghost',
+      date: oldDate,
+      ref: newId,
+    })
+  }
 
   // Update any existing ghosts that pointed to the old entry
   const oldGhosts = await getGhostsForRef(entry._id)
@@ -237,13 +352,26 @@ export async function getEntriesForDateRange(
   return entries
 }
 
+// ─── Unscheduled queries ──────────────────────────────────────────
+
+export async function getUnscheduledEntries(): Promise<BujoEntry[]> {
+  const result = await localDb.allDocs({
+    include_docs: true,
+    startkey: `${UNSCHEDULED}:`,
+    endkey: `${UNSCHEDULED}:\ufff0`,
+  })
+  return result.rows
+    .map((r) => r.doc! as AnyDoc)
+    .filter((d) => d.type === 'entry') as BujoEntry[]
+}
+
 // ─── Migration Logic ───────────────────────────────────────────────
 
 export async function migrateOpenTasks(today: string): Promise<number> {
   const result = await localDb.allDocs({ include_docs: true })
   const stale = result.rows
     .map((r) => r.doc! as AnyDoc)
-    .filter((d) => d.type === 'entry' && (d as BujoEntry).status === 'task' && d.date < today) as BujoEntry[]
+    .filter((d) => d.type === 'entry' && (d as BujoEntry).status === 'task' && isScheduledDate(d.date) && d.date < today) as BujoEntry[]
 
   if (stale.length === 0) return 0
 

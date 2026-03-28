@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from 'react'
 import {
   addEntry,
   updateEntry,
-
+  stripTags,
   migrateOpenTasks,
   type BujoStatus,
   type BujoEntry,
@@ -55,9 +55,10 @@ function formatDailyDate(iso: string): string {
 interface Props {
   initialDate?: string | null
   onOpenDetail?: (entry: BujoEntry) => void
+  onTagClick?: (tagName: string) => void
 }
 
-export default function DailyLog({ initialDate, onOpenDetail }: Props) {
+export default function DailyLog({ initialDate, onOpenDetail, onTagClick }: Props) {
   const [viewDate, setViewDate] = useState(() => initialDate || toISODate(new Date()))
   const [newBody, setNewBody] = useState('')
   const [newStatus, setNewStatus] = useState<BujoStatus>('task')
@@ -146,7 +147,7 @@ export default function DailyLog({ initialDate, onOpenDetail }: Props) {
                 >
                   <span className="signifier ghost-signifier">&gt;</span>
                   <span className="body ghost-body">
-                    {de.entry.body}
+                    {stripTags(de.entry.body)}
                   </span>
                   <span className="ghost-label">→ {de.entry.date}</span>
                 </button>
@@ -155,8 +156,8 @@ export default function DailyLog({ initialDate, onOpenDetail }: Props) {
                   entry={de.entry}
                   statusIcon={STATUS_ICONS[de.entry.status]}
                   onCycleStatus={cycleStatus}
-
                   onOpenDetail={onOpenDetail}
+                  onTagClick={onTagClick}
                 />
               )}
             </li>

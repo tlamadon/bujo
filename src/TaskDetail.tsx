@@ -3,10 +3,13 @@ import {
   updateEntry,
   deleteEntry,
   rescheduleEntry,
+  parseTags,
+  isScheduledDate,
   type BujoEntry,
   type BujoStatus,
 } from './db'
 import { toISODate } from './dateUtils'
+import TagPills from './TagPills'
 
 const STATUS_ICONS: Record<BujoStatus, string> = {
   task: '•',
@@ -69,7 +72,7 @@ export default function TaskDetail({ entry, onClose }: Props) {
         </header>
 
         <div className="task-detail-meta">
-          <span className="task-detail-date">Date: {entry.date}</span>
+          <span className="task-detail-date">Date: {isScheduledDate(entry.date) ? entry.date : 'Unscheduled'}</span>
           <span className="task-detail-created">
             Created: {createdDate.toLocaleDateString()} {createdDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
@@ -81,11 +84,11 @@ export default function TaskDetail({ entry, onClose }: Props) {
             <ul className="task-detail-history-list">
               {dateHistory.map((d, i) => (
                 <li key={i}>
-                  <span className="ghost-signifier">&gt;</span> {d}
+                  <span className="ghost-signifier">&gt;</span> {isScheduledDate(d) ? d : 'Unscheduled'}
                 </li>
               ))}
               <li className="task-detail-history-current">
-                <span className="signifier-static">•</span> {entry.date} <em>(current)</em>
+                <span className="signifier-static">•</span> {isScheduledDate(entry.date) ? entry.date : 'Unscheduled'} <em>(current)</em>
               </li>
             </ul>
           </div>
@@ -115,6 +118,13 @@ export default function TaskDetail({ entry, onClose }: Props) {
           autoFocus
         />
 
+        {parseTags(body).length > 0 && (
+          <div className="task-detail-tags">
+            <label>Tags:</label>
+            <TagPills tags={parseTags(body)} />
+          </div>
+        )}
+
         <div className="task-detail-actions">
           <button className="task-detail-save" onClick={handleSave}>
             Save
@@ -130,7 +140,7 @@ export default function TaskDetail({ entry, onClose }: Props) {
               }
             }}
           >
-            Reschedule
+            {isScheduledDate(entry.date) ? 'Reschedule' : 'Schedule'}
           </button>
           <button className="task-detail-delete" onClick={handleDelete}>
             Delete
@@ -149,7 +159,9 @@ export default function TaskDetail({ entry, onClose }: Props) {
               Confirm
             </button>
             <p className="task-detail-reschedule-hint">
-              This will leave a &ldquo;&gt;&rdquo; marker on today and move the task to the selected date.
+              {isScheduledDate(entry.date)
+                ? 'This will leave a "\u003e" marker on the current date and move the task to the selected date.'
+                : 'This will assign a date to this unscheduled task.'}
             </p>
           </div>
         )}

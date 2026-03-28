@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from 'react'
 import {
   addEntry,
   updateEntry,
-
+  stripTags,
   type BujoStatus,
   type BujoEntry,
   type DisplayEntry,
@@ -59,9 +59,10 @@ function formatShortDate(iso: string): string {
 interface Props {
   onNavigateToDay: (date: string) => void
   onOpenDetail?: (entry: BujoEntry) => void
+  onTagClick?: (tagName: string) => void
 }
 
-export default function WeeklyLog({ onNavigateToDay, onOpenDetail }: Props) {
+export default function WeeklyLog({ onNavigateToDay, onOpenDetail, onTagClick }: Props) {
   const [weekStart, setWeekStart] = useState(() => getMonday(new Date()))
 
   const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart])
@@ -202,7 +203,7 @@ export default function WeeklyLog({ onNavigateToDay, onOpenDetail }: Props) {
                         >
                           <span className="signifier ghost-signifier">&gt;</span>
                           <span className="body ghost-body">
-                            {de.entry.body}
+                            {stripTags(de.entry.body)}
                           </span>
                           <span className="ghost-label">→ {de.entry.date}</span>
                         </button>
@@ -211,8 +212,8 @@ export default function WeeklyLog({ onNavigateToDay, onOpenDetail }: Props) {
                           entry={de.entry}
                           statusIcon={STATUS_ICONS[de.entry.status]}
                           onCycleStatus={cycleStatus}
-
                           onOpenDetail={onOpenDetail}
+                          onTagClick={onTagClick}
                         />
                       )}
                     </li>

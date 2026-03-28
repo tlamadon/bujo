@@ -4,7 +4,12 @@ import {
   sync,
   getEntriesForDate,
   getEntriesForDateRange,
+  getAllTags,
+  getEntriesForTag,
+  getUnscheduledEntries,
   type DisplayEntry,
+  type TagDoc,
+  type BujoEntry,
 } from './db'
 
 export type SyncState = 'synced' | 'syncing' | 'offline' | 'error' | 'denied'
@@ -135,6 +140,84 @@ export function useEntriesForDateRange(
       changes.cancel()
     }
   }, [startDate, endDate])
+
+  return entries
+}
+
+/** Reactive hook: all tag documents */
+export function useTags(): TagDoc[] | undefined {
+  const [tags, setTags] = useState<TagDoc[] | undefined>(undefined)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const load = () =>
+      getAllTags().then((docs) => {
+        if (!cancelled) setTags(docs)
+      })
+
+    load()
+
+    const changes = localDb.changes({ since: 'now', live: true })
+    changes.on('change', () => load())
+
+    return () => {
+      cancelled = true
+      changes.cancel()
+    }
+  }, [])
+
+  return tags
+}
+
+/** Reactive hook: all entries with a given tag */
+export function useEntriesForTag(tagName: string): BujoEntry[] | undefined {
+  const [entries, setEntries] = useState<BujoEntry[] | undefined>(undefined)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const load = () =>
+      getEntriesForTag(tagName).then((docs) => {
+        if (!cancelled) setEntries(docs)
+      })
+
+    load()
+
+    const changes = localDb.changes({ since: 'now', live: true })
+    changes.on('change', () => load())
+
+    return () => {
+      cancelled = true
+      changes.cancel()
+    }
+  }, [tagName])
+
+  return entries
+}
+
+/** Reactive hook: all unscheduled entries */
+export function useUnscheduledEntries(): BujoEntry[] | undefined {
+  const [entries, setEntries] = useState<BujoEntry[] | undefined>(undefined)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const load = () =>
+      getUnscheduledEntries().then((docs) => {
+        if (!cancelled) setEntries(docs)
+      })
+
+    load()
+
+    const changes = localDb.changes({ since: 'now', live: true })
+    changes.on('change', () => load())
+
+    return () => {
+      cancelled = true
+      changes.cancel()
+    }
+  }, [])
 
   return entries
 }

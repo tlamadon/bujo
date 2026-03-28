@@ -1,8 +1,9 @@
 import { useState, useMemo } from 'react'
-import { type BujoStatus, type DisplayEntry } from './db'
+import { stripTags, type BujoStatus, type DisplayEntry } from './db'
 import { useEntriesForDateRange } from './hooks'
 import { relativeMonthLabel } from './relativeLabel'
 import { toISODate } from './dateUtils'
+import TagPills from './TagPills'
 
 const STATUS_ICONS: Record<BujoStatus, string> = {
   task: '•',
@@ -50,9 +51,10 @@ function buildCalendarGrid(year: number, month: number): (string | null)[][] {
 
 interface Props {
   onNavigateToDay: (date: string) => void
+  onTagClick?: (tagName: string) => void
 }
 
-export default function MonthlyLog({ onNavigateToDay }: Props) {
+export default function MonthlyLog({ onNavigateToDay, onTagClick }: Props) {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth())
@@ -198,7 +200,10 @@ export default function MonthlyLog({ onNavigateToDay }: Props) {
                   {STATUS_ICONS[de.entry.status]}
                 </span>
                 <span className="month-task-date">{de.entry.date.slice(5)}</span>
-                <span className="body">{de.entry.body}</span>
+                <span className="body">
+                  {stripTags(de.entry.body)}
+                  <TagPills tags={de.entry.tags} small onTagClick={onTagClick} />
+                </span>
               </li>
             ))}
           </ul>

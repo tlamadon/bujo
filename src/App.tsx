@@ -4,6 +4,8 @@ import { useRegisterSW } from 'virtual:pwa-register/react'
 import DailyLog from './DailyLog'
 import WeeklyLog from './WeeklyLog'
 import MonthlyLog from './MonthlyLog'
+import TagView from './TagView'
+import FutureLog from './FutureLog'
 import TaskDetail from './TaskDetail'
 import { useSyncStatus } from './hooks'
 import type { SyncState } from './hooks'
@@ -28,7 +30,7 @@ function SyncIndicator() {
   )
 }
 
-type View = 'daily' | 'weekly' | 'monthly'
+type View = 'daily' | 'weekly' | 'monthly' | 'future' | 'tags'
 
 export default function App() {
   const [view, setView] = useState<View>('daily')
@@ -47,6 +49,13 @@ export default function App() {
 
   const closeDetail = useCallback(() => {
     setDetailEntry(null)
+  }, [])
+
+  const [selectedTag, setSelectedTag] = useState<string | null>(null)
+
+  const navigateToTag = useCallback((tagName: string) => {
+    setSelectedTag(tagName)
+    setView('tags')
   }, [])
 
   return (
@@ -75,11 +84,25 @@ export default function App() {
         >
           Monthly
         </button>
+        <button
+          className={view === 'future' ? 'active' : ''}
+          onClick={() => setView('future')}
+        >
+          Future
+        </button>
+        <button
+          className={view === 'tags' ? 'active' : ''}
+          onClick={() => setView('tags')}
+        >
+          Tags
+        </button>
       </nav>
 
-      {view === 'daily' && <DailyLog initialDate={dailyDate} onOpenDetail={openDetail} />}
-      {view === 'weekly' && <WeeklyLog onNavigateToDay={navigateToDay} onOpenDetail={openDetail} />}
-      {view === 'monthly' && <MonthlyLog onNavigateToDay={navigateToDay} />}
+      {view === 'daily' && <DailyLog initialDate={dailyDate} onOpenDetail={openDetail} onTagClick={navigateToTag} />}
+      {view === 'weekly' && <WeeklyLog onNavigateToDay={navigateToDay} onOpenDetail={openDetail} onTagClick={navigateToTag} />}
+      {view === 'monthly' && <MonthlyLog onNavigateToDay={navigateToDay} onTagClick={navigateToTag} />}
+      {view === 'future' && <FutureLog onOpenDetail={openDetail} onTagClick={navigateToTag} />}
+      {view === 'tags' && <TagView onOpenDetail={openDetail} onTagClick={navigateToTag} initialTag={selectedTag} onClearInitialTag={() => setSelectedTag(null)} />}
 
       {detailEntry && <TaskDetail entry={detailEntry} onClose={closeDetail} />}
     </main>

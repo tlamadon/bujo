@@ -1,14 +1,16 @@
 import { useState, useRef, useCallback } from 'react'
-import { updateEntry, type BujoEntry } from './db'
+import { updateEntry, stripTags, type BujoEntry } from './db'
+import TagPills from './TagPills'
 
 interface Props {
   entry: BujoEntry
   statusIcon: string
   onCycleStatus: (entry: BujoEntry) => void
   onOpenDetail?: (entry: BujoEntry) => void
+  onTagClick?: (tagName: string) => void
 }
 
-export default function EditableEntry({ entry, statusIcon, onCycleStatus, onOpenDetail }: Props) {
+export default function EditableEntry({ entry, statusIcon, onCycleStatus, onOpenDetail, onTagClick }: Props) {
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -59,7 +61,8 @@ export default function EditableEntry({ entry, statusIcon, onCycleStatus, onOpen
         />
       ) : (
         <span className="body" onClick={startEditing} title="Click to edit">
-          {entry.body}
+          {stripTags(entry.body)}
+          <TagPills tags={entry.tags} small onTagClick={onTagClick} />
         </span>
       )}
       {onOpenDetail && (
