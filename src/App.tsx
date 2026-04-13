@@ -18,14 +18,28 @@ const syncLabels: Record<SyncState, string> = {
   offline: 'Offline',
   error: 'Sync error',
   denied: 'Access denied',
+  'auth-required': 'Login required',
 }
 
 function SyncIndicator() {
   const { state, error } = useSyncStatus()
+
+  const reAuthenticate = () => {
+    // Navigate to origin to trigger Cloudflare Access login flow.
+    // Using window.location.href (not reload) to ensure the request
+    // goes through Cloudflare rather than being served by the service worker.
+    window.location.href = window.location.origin
+  }
+
   return (
     <div className={`sync-indicator sync-${state}`} title={error ?? syncLabels[state]}>
       <span className="sync-dot" />
       <span className="sync-label">{syncLabels[state]}</span>
+      {state === 'auth-required' && (
+        <button className="sync-reauth-btn" onClick={reAuthenticate}>
+          Log in
+        </button>
+      )}
     </div>
   )
 }

@@ -12,19 +12,32 @@ import {
   type BujoEntry,
 } from './db'
 
-export type SyncState = 'synced' | 'syncing' | 'offline' | 'error' | 'denied'
+export type SyncState = 'synced' | 'syncing' | 'offline' | 'error' | 'denied' | 'auth-required'
 
 export interface SyncStatus {
   state: SyncState
   error?: string
 }
 
-async function checkRemote(): Promise<boolean> {
+type RemoteStatus = 'reachable' | 'auth-required' | 'offline'
+
+async function checkRemote(): Promise<RemoteStatus> {
   try {
     const resp = await fetch(`${window.location.origin}/couchdb/bujo`, { method: 'HEAD' })
-    return resp.ok
+    // Cloudflare Access redirects to its login page when auth expires.
+    // Detect this by checking if the response was redirected away from our origin,
+    // or if we got an HTML response instead of JSON from CouchDB.
+    if (resp.redirected && new URL(resp.url).origin !== window.location.origin) {
+      return 'auth-required'
+    }
+    // Cloudflare may also return 403 with its own HTML page
+    if (resp.status === 403) {
+      const ct = resp.headers.get('content-type') ?? ''
+      if (ct.includes('text/html')) return 'auth-required'
+    }
+    return resp.ok ? 'reachable' : 'offline'
   } catch {
-    return false
+    return 'offline'
   }
 }
 
@@ -37,35 +50,35 @@ export function useSyncStatus(): SyncStatus {
       setStatus({ state: 'syncing' })
     }
 
+    const resolveStatus = (remote: RemoteStatus, fallbackState: SyncState, msg?: string): SyncStatus => {
+      if (remote === 'auth-required') return { state: 'auth-required', error: 'Session expired — re-authenticate to sync' }
+      if (remote === 'offline') return { state: 'offline', error: 'Cannot reach server' }
+      return msg ? { state: fallbackState, error: msg } : { state: fallbackState }
+    }
+
     // 'paused' fires when replication is caught up and idle
     const onPaused = (err: unknown) => {
-      if (err) {
-        const msg = err instanceof Error ? err.message : 'Sync error'
-        checkRemote().then((reachable) => {
-          setStatus(reachable
-            ? { state: 'error', error: msg }
-            : { state: 'offline', error: 'Cannot reach server' })
-        })
-      } else {
-        checkRemote().then((reachable) => {
-          setStatus(reachable
-            ? { state: 'synced' }
-            : { state: 'offline', error: 'Cannot reach server' })
-        })
-      }
+      const msg = err instanceof Error ? err.message : err ? 'Sync error' : undefined
+      checkRemote().then((remote) => {
+        setStatus(resolveStatus(remote, msg ? 'error' : 'synced', msg))
+      })
     }
 
     const onError = (err: unknown) => {
       const msg = err instanceof Error ? err.message : 'Sync error'
-      checkRemote().then((reachable) => {
-        setStatus(reachable
-          ? { state: 'error', error: msg }
-          : { state: 'offline', error: 'Cannot reach server' })
+      checkRemote().then((remote) => {
+        setStatus(resolveStatus(remote, 'error', msg))
       })
     }
 
     const onDenied = () => {
-      setStatus({ state: 'denied', error: 'Access denied' })
+      checkRemote().then((remote) => {
+        if (remote === 'auth-required') {
+          setStatus({ state: 'auth-required', error: 'Session expired — re-authenticate to sync' })
+        } else {
+          setStatus({ state: 'denied', error: 'Access denied' })
+        }
+      })
     }
 
     sync.on('active', onActive)
@@ -74,8 +87,9 @@ export function useSyncStatus(): SyncStatus {
     sync.on('denied', onDenied)
 
     // Check initial connectivity
-    checkRemote().then((reachable) => {
-      if (!reachable) setStatus({ state: 'offline', error: 'Cannot reach server' })
+    checkRemote().then((remote) => {
+      if (remote === 'auth-required') setStatus({ state: 'auth-required', error: 'Session expired — re-authenticate to sync' })
+      else if (remote === 'offline') setStatus({ state: 'offline', error: 'Cannot reach server' })
     })
 
     return () => {

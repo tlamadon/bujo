@@ -75,6 +75,26 @@
   background: #f44336;
 }
 
+.sync-auth-required .sync-dot {
+  background: #ff9800;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.sync-reauth-btn {
+  background: #1976d2;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.65rem;
+  cursor: pointer;
+  margin-left: 0.25rem;
+}
+
+.sync-reauth-btn:hover {
+  background: #1565c0;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
