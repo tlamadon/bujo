@@ -22,22 +22,40 @@ export interface SyncStatus {
 type RemoteStatus = 'reachable' | 'auth-required' | 'offline'
 
 async function checkRemote(): Promise<RemoteStatus> {
+  const ctrl = new AbortController()
+  const timeout = setTimeout(() => ctrl.abort(), 5000)
   try {
-    const resp = await fetch(`${window.location.origin}/couchdb/bujo`, { method: 'HEAD' })
-    // Cloudflare Access redirects to its login page when auth expires.
-    // Detect this by checking if the response was redirected away from our origin,
-    // or if we got an HTML response instead of JSON from CouchDB.
-    if (resp.redirected && new URL(resp.url).origin !== window.location.origin) {
+    // Use redirect: 'manual' so we detect Cloudflare Access redirects
+    // without following them cross-origin (which fails CORS on iOS Safari).
+    const resp = await fetch(`${window.location.origin}/couchdb/bujo`, {
+      method: 'HEAD',
+      redirect: 'manual',
+      signal: ctrl.signal,
+      cache: 'no-store',
+    })
+    // Opaque redirect = Cloudflare (or anything else) tried to redirect us away.
+    // Status 0 with type 'opaqueredirect' is the standard signal.
+    if (resp.type === 'opaqueredirect' || resp.status === 0) {
+      return 'auth-required'
+    }
+    // Some setups return the redirect as a visible 3xx
+    if (resp.status >= 300 && resp.status < 400) {
       return 'auth-required'
     }
     // Cloudflare may also return 403 with its own HTML page
-    if (resp.status === 403) {
-      const ct = resp.headers.get('content-type') ?? ''
-      if (ct.includes('text/html')) return 'auth-required'
+    if (resp.status === 401 || resp.status === 403) {
+      return 'auth-required'
+    }
+    // CouchDB root returns JSON. If we got HTML, something (Cloudflare) intercepted us.
+    const ct = resp.headers.get('content-type') ?? ''
+    if (ct.includes('text/html')) {
+      return 'auth-required'
     }
     return resp.ok ? 'reachable' : 'offline'
   } catch {
     return 'offline'
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
@@ -46,8 +64,17 @@ export function useSyncStatus(): SyncStatus {
   const [status, setStatus] = useState<SyncStatus>({ state: 'syncing' })
 
   useEffect(() => {
+    let currentState: SyncState = 'syncing'
+    let lastActiveAt = Date.now()
+
+    const update = (s: SyncStatus) => {
+      currentState = s.state
+      setStatus(s)
+    }
+
     const onActive = () => {
-      setStatus({ state: 'syncing' })
+      lastActiveAt = Date.now()
+      update({ state: 'syncing' })
     }
 
     const resolveStatus = (remote: RemoteStatus, fallbackState: SyncState, msg?: string): SyncStatus => {
@@ -60,23 +87,23 @@ export function useSyncStatus(): SyncStatus {
     const onPaused = (err: unknown) => {
       const msg = err instanceof Error ? err.message : err ? 'Sync error' : undefined
       checkRemote().then((remote) => {
-        setStatus(resolveStatus(remote, msg ? 'error' : 'synced', msg))
+        update(resolveStatus(remote, msg ? 'error' : 'synced', msg))
       })
     }
 
     const onError = (err: unknown) => {
       const msg = err instanceof Error ? err.message : 'Sync error'
       checkRemote().then((remote) => {
-        setStatus(resolveStatus(remote, 'error', msg))
+        update(resolveStatus(remote, 'error', msg))
       })
     }
 
     const onDenied = () => {
       checkRemote().then((remote) => {
         if (remote === 'auth-required') {
-          setStatus({ state: 'auth-required', error: 'Session expired — re-authenticate to sync' })
+          update({ state: 'auth-required', error: 'Session expired — re-authenticate to sync' })
         } else {
-          setStatus({ state: 'denied', error: 'Access denied' })
+          update({ state: 'denied', error: 'Access denied' })
         }
       })
     }
@@ -86,17 +113,48 @@ export function useSyncStatus(): SyncStatus {
     sync.on('error', onError)
     sync.on('denied', onDenied)
 
-    // Check initial connectivity
-    checkRemote().then((remote) => {
-      if (remote === 'auth-required') setStatus({ state: 'auth-required', error: 'Session expired — re-authenticate to sync' })
-      else if (remote === 'offline') setStatus({ state: 'offline', error: 'Cannot reach server' })
-    })
+    // Periodic poll: iOS Safari sometimes swallows PouchDB events (backgrounded
+    // tab, failed fetch, etc.), leaving us stuck in 'syncing'. Also detects
+    // Cloudflare auth expiry without needing a sync attempt to fail first.
+    const poll = () => {
+      checkRemote().then((remote) => {
+        if (remote === 'auth-required') {
+          if (currentState !== 'auth-required') {
+            update({ state: 'auth-required', error: 'Session expired — re-authenticate to sync' })
+          }
+        } else if (remote === 'offline') {
+          if (currentState !== 'offline') {
+            update({ state: 'offline', error: 'Cannot reach server' })
+          }
+        } else {
+          // Remote reachable. If stuck in 'syncing' with no activity for a while,
+          // clear to 'synced' — PouchDB will move us back on the next active event.
+          if (currentState === 'syncing' && Date.now() - lastActiveAt > 10000) {
+            update({ state: 'synced' })
+          } else if (currentState === 'offline' || currentState === 'auth-required') {
+            update({ state: 'synced' })
+          }
+        }
+      })
+    }
+
+    // Initial check + periodic poll every 15s.
+    poll()
+    const intervalId = window.setInterval(poll, 15000)
+
+    // Re-check when tab becomes visible (iOS Safari aggressively suspends tabs).
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') poll()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
 
     return () => {
       sync.removeListener('active', onActive)
       sync.removeListener('paused', onPaused)
       sync.removeListener('error', onError)
       sync.removeListener('denied', onDenied)
+      window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [])
 
