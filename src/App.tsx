@@ -75,7 +75,9 @@ export default function App() {
   return (
     <main className="app">
       <div className="app-header">
-        <h1 className="app-title">BuJo</h1>
+        <h1 className="app-title">
+          BuJo <span className="app-version">v{__APP_VERSION__}</span>
+        </h1>
         <SyncIndicator />
       </div>
 

@@ -33,6 +33,15 @@
   margin-bottom: 0.5rem;
 }
 
+.app-version {
+  font-family: ui-monospace, monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0;
+  opacity: 0.4;
+  vertical-align: middle;
+  margin-left: 0.35rem;
+}
+
 .app-title {
   text-align: center;
   font-family: 'Georgia', serif;
