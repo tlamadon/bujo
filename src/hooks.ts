@@ -23,37 +23,38 @@ type RemoteStatus = 'reachable' | 'auth-required' | 'offline'
 
 async function checkRemote(): Promise<RemoteStatus> {
   const ctrl = new AbortController()
-  const timeout = setTimeout(() => ctrl.abort(), 5000)
+  const timeout = setTimeout(() => ctrl.abort(), 8000)
   try {
-    // Use redirect: 'manual' so we detect Cloudflare Access redirects
-    // without following them cross-origin (which fails CORS on iOS Safari).
+    // Follow redirects so we can inspect where we landed. iOS Safari handles
+    // redirect: 'manual' poorly for cross-origin redirects (throws instead of
+    // returning opaqueredirect), so we follow and inspect the final response.
     const resp = await fetch(`${window.location.origin}/couchdb/bujo`, {
-      method: 'HEAD',
-      redirect: 'manual',
+      method: 'GET',
       signal: ctrl.signal,
       cache: 'no-store',
+      credentials: 'include',
     })
-    // Opaque redirect = Cloudflare (or anything else) tried to redirect us away.
-    // Status 0 with type 'opaqueredirect' is the standard signal.
-    if (resp.type === 'opaqueredirect' || resp.status === 0) {
-      return 'auth-required'
+    // Redirected away from our origin → Cloudflare Access login page.
+    if (resp.redirected) {
+      try {
+        if (new URL(resp.url).origin !== window.location.origin) return 'auth-required'
+      } catch {
+        return 'auth-required'
+      }
     }
-    // Some setups return the redirect as a visible 3xx
-    if (resp.status >= 300 && resp.status < 400) {
-      return 'auth-required'
-    }
-    // Cloudflare may also return 403 with its own HTML page
-    if (resp.status === 401 || resp.status === 403) {
-      return 'auth-required'
-    }
-    // CouchDB root returns JSON. If we got HTML, something (Cloudflare) intercepted us.
+    if (resp.status === 401 || resp.status === 403) return 'auth-required'
+    // CouchDB root returns JSON. HTML means Cloudflare (or a gateway) intercepted.
     const ct = resp.headers.get('content-type') ?? ''
-    if (ct.includes('text/html')) {
-      return 'auth-required'
-    }
+    if (ct.includes('text/html')) return 'auth-required'
     return resp.ok ? 'reachable' : 'offline'
   } catch {
-    return 'offline'
+    // Fetch threw. On iOS this commonly happens when a cross-origin redirect
+    // (to cloudflareaccess.com) is blocked by CORS. If the browser says we're
+    // online, it's almost certainly an auth issue rather than real offline.
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return 'offline'
+    }
+    return 'auth-required'
   } finally {
     clearTimeout(timeout)
   }
