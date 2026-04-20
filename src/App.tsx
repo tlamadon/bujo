@@ -24,11 +24,26 @@ const syncLabels: Record<SyncState, string> = {
 function SyncIndicator() {
   const { state, error } = useSyncStatus()
 
-  const reAuthenticate = () => {
-    // Navigate to origin to trigger Cloudflare Access login flow.
-    // Using window.location.href (not reload) to ensure the request
-    // goes through Cloudflare rather than being served by the service worker.
-    window.location.href = window.location.origin
+  const reAuthenticate = async () => {
+    // The service worker binds all navigations to the cached index.html, so a
+    // plain reload never reaches Cloudflare and the Access login page can't
+    // challenge the user. Unregister the SW and clear its caches so the next
+    // navigation goes over the wire. PouchDB data (IndexedDB) is untouched,
+    // and the SW re-registers on the next load via useRegisterSW().
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations()
+        await Promise.all(regs.map((r) => r.unregister()))
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys()
+        await Promise.all(keys.map((k) => caches.delete(k)))
+      }
+    } catch {
+      // Fall through and attempt the navigation anyway.
+    }
+    // Cache-bust query param so HTTP cache can't serve a stale shell either.
+    window.location.href = `${window.location.origin}/?reauth=${Date.now()}`
   }
 
   return (
