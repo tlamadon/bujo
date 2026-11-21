@@ -1,4 +1,5 @@
 export * from './types'
 export * from './tags'
 export * from './ids'
-export { createBujo, type Bujo } from './store'
+export * from './errors'
+export { createBujo, type Bujo, type FindOptions } from './store'
