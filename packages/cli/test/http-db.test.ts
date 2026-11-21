@@ -98,12 +98,12 @@ describe.each(backends)('HTTP database client against $name', ({ start }) => {
   it('queries ranges and explicit keys', async () => {
     await db.bulkDocs(['2026-02-01:1:aaaaaa', '2026-02-02:1:bbbbbb', '2026-02-03:1:cccccc', '2026-02:1:dddddd'].map((_id) => ({ _id })))
 
-    const range = await db.allDocs({ include_docs: true, startkey: '2026-02-01:', endkey: '2026-02-02:￰' })
+    const range = await db.allDocs({ include_docs: true, startkey: '2026-02-01:', endkey: '2026-02-02:\ufff0' })
     expect(range.rows.map((r) => r.id)).toEqual(['2026-02-01:1:aaaaaa', '2026-02-02:1:bbbbbb'])
     expect(range.rows[0].doc).toMatchObject({ _id: '2026-02-01:1:aaaaaa' })
 
     // A month key sorts after the days of its month
-    const month = await db.allDocs({ startkey: '2026-02-', endkey: '2026-02:￰' })
+    const month = await db.allDocs({ startkey: '2026-02-', endkey: '2026-02:\ufff0' })
     expect(month.rows.map((r) => r.id).at(-1)).toBe('2026-02:1:dddddd')
 
     const keyed = await db.allDocs({ include_docs: true, keys: ['2026-02-03:1:cccccc', 'no-such-doc', '2026-02-01:1:aaaaaa'] })

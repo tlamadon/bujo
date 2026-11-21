@@ -118,7 +118,7 @@ class UsageError extends Error {
 // useful than digit flags here, so such arguments are disguised on the way
 // in and restored when a command reads them.
 const NEGATIVE = /^-(\d+[dw]?)$/
-const NEGATIVE_MARK = '−'
+const NEGATIVE_MARK = '\u2212'
 
 function protectNegatives(argv: string[]): string[] {
   return argv.map((arg) => arg.replace(NEGATIVE, `${NEGATIVE_MARK}$1`))
@@ -260,7 +260,7 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
       if (flags.json) {
         io.stdout(`${JSON.stringify({ ok: output.exitCode === undefined, command: name, ...output.data }, null, 2)}\n`)
       } else {
-        const f: Fmt = { color: useColor(flags), today: typeof output.data.today === 'string' ? output.data.today : todayIn(flags.tz) }
+        const f: Fmt = { color: useColor(flags), today: typeof output.data.today === 'string' ? output.data.today : '' }
         io.stdout(`${output.text(f)}\n`)
       }
       if (output.exitCode !== undefined) exitCode = output.exitCode
@@ -343,7 +343,7 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
   define('tags', 'list tags with open/total counts', () => {}, async (flags) => {
     const s = open(flags)
     const { tags } = await tagList(s.bujo)
-    return { data: { tags }, text: (f) => renderTags(tags, f) }
+    return { data: { today: s.today, tags }, text: (f) => renderTags(tags, f) }
   })
 
   define(

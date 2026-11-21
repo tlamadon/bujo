@@ -201,7 +201,7 @@ export default function MonthlyLog({ onNavigateToDay, onOpenDetail, onTagClick }
                 <span className="signifier-static">
                   {entryIcon(de.entry)}
                 </span>
-                <span className="month-task-date">{de.entry.date.slice(5) || '—'}</span>
+                <span className="month-task-date">{de.entry.date.length === 10 ? de.entry.date.slice(5) : '—'}</span>
                 <span className="body">
                   {de.entry.priority && <span className="priority-marker" title="Priority">*</span>}
                   {de.entry.status === 'event' && de.entry.time && (

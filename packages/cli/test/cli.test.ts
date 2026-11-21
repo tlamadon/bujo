@@ -268,6 +268,8 @@ describe('changing entries', () => {
     expect((await ok('move', goal.ref, '2026-12')).entry.date).toBe('2026-12')
     // A day stands for the week it is in
     expect((await ok('move', goal.ref, '2026-12-09')).entry.date).toBe('2026-W50')
+    expect((await ok('move', goal.ref, 'next-week')).entry.date).toBe('2026-W48')
+    expect((await ok('schedule', goal.ref, 'next-month')).entry.date).toBe('2026-12')
     expect((await cli('move', goal.ref, 'unscheduled')).code).toBe(1)
 
     const task = (await ok('add', 'A task')).entry
