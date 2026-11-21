@@ -22,6 +22,9 @@ const MAX_RETRIES = 5
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 
+/** Shortest text fragment accepted as an entry reference. */
+const MIN_SUBSTRING = 3
+
 /** Optional fields when creating an entry. */
 export interface NewEntryFields {
   priority?: boolean
@@ -136,6 +139,22 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
   }
 
   /**
+   * Find an entry that is no longer under `id` because it was moved: same
+   * tail, different date prefix. `except` is an id to ignore.
+   */
+  async function findRelocated(id: string, except?: string): Promise<BujoEntry | null> {
+    const suffix = `:${idTail(id)}`
+    const result = await db.allDocs({})
+    for (const row of result.rows) {
+      if (row.id === id || row.id === except) continue
+      if (!row.id.endsWith(suffix) || row.id.startsWith('ghost:')) continue
+      const doc = await getOrNull(row.id)
+      if (doc?.type === 'entry') return doc
+    }
+    return null
+  }
+
+  /**
    * Write `doc`, replacing whatever is stored under its id. On a revision
    * conflict the current revision is looked up and the write retried.
    */
@@ -245,7 +264,8 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
   /**
    * Apply `change` to an entry and store the result. `entry` may be stale:
    * on a revision conflict the change is re-applied to the latest stored
-   * version. `change` returns null when there is nothing to do.
+   * version — wherever that is, if the entry was moved in the meantime.
+   * `change` returns null when there is nothing to do.
    */
   async function mutateEntry(
     entry: BujoEntry,
@@ -268,8 +288,8 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
         return { ...doc, _rev: res.rev }
       } catch (err) {
         if (!isConflict(err) || attempt >= MAX_RETRIES) throw err
-        const latest = await getOrNull(entry._id)
-        if (!latest || latest.type !== 'entry') throw err
+        const latest = (await getOrNull(base._id)) ?? (await findRelocated(base._id))
+        if (!latest || latest.type !== 'entry') throw new NotFoundError('This entry no longer exists')
         base = latest
       }
     }
@@ -365,7 +385,12 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
         return
       } catch (err) {
         const latest = await getOrNull(entry._id)
-        if (!latest) return // already gone
+        if (!latest) {
+          // Gone from here. If it was moved rather than deleted, delete it there.
+          const relocated = await findRelocated(entry._id)
+          if (relocated) await deleteEntry(relocated)
+          return
+        }
         if (attempt >= MAX_RETRIES || latest._rev === rev) throw err
         rev = latest._rev
       }
@@ -420,7 +445,13 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
         return { ...moved, _rev: newRev }
       } catch (err) {
         const latest = await getOrNull(oldId)
-        if (!latest || latest.type !== 'entry') return { ...moved, _rev: newRev } // already gone
+        if (!latest || latest.type !== 'entry') {
+          // Already gone. If someone moved it elsewhere meanwhile, the copy
+          // just written is a duplicate of that one: move that one here instead.
+          const relocated = await findRelocated(oldId, newId)
+          if (relocated) return rescheduleEntry(relocated, newDate)
+          return { ...moved, _rev: newRev }
+        }
         if (attempt >= MAX_RETRIES || latest._rev === source._rev) throw err
         // The entry changed since the caller read it: carry the newer version over.
         source = latest
@@ -588,7 +619,13 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
       throw new AmbiguousError(`Ref "${q}" matches ${byRef.length} entries; use the full id`, byRef)
     }
 
-    // 3. Body substring, preferred entries first
+    // 3. Body substring, preferred entries first. Too short a fragment would
+    // "uniquely" match whatever happens to be the only open task: refuse it.
+    if (q.length < MIN_SUBSTRING) {
+      throw new NotFoundError(
+        `No entry has the ref "${q}" (text matches need at least ${MIN_SUBSTRING} characters)`,
+      )
+    }
     const bySubstring = entries.filter((e) => e.body.toLowerCase().includes(ref))
     const preferred = options.prefer ? bySubstring.filter(options.prefer) : []
     const pool = preferred.length > 0 ? preferred : bySubstring

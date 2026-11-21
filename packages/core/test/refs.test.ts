@@ -185,6 +185,54 @@ describe('concurrent writers', () => {
     expect(ghosts).toHaveLength(1)
   })
 
+  it('follows an entry that was moved since the caller read it', async () => {
+    const { db, bujo } = newBujo()
+    const stale = await bujo.addEntry('2026-11-20', 'task', 'Moved elsewhere')
+    const moved = await bujo.rescheduleEntry(stale, '2026-11-21') // another client
+
+    const done = await bujo.completeEntry(stale)
+    expect(done).toMatchObject({ _id: moved._id, status: 'completed', dateHistory: ['2026-11-20'] })
+
+    const edited = await bujo.updateEntry(stale, { body: 'Moved and edited' })
+    expect(edited).toMatchObject({ _id: moved._id, status: 'completed', body: 'Moved and edited' })
+    expect((await dump(db)).entries).toHaveLength(1)
+  })
+
+  it('does not duplicate an entry that two clients move to different days', async () => {
+    const { db, bujo } = newBujo()
+    const stale = await bujo.addEntry('2026-11-20', 'task', 'Tug of war')
+    await bujo.rescheduleEntry(stale, '2026-11-21') // client 1
+    const final = await bujo.rescheduleEntry(stale, '2026-11-25') // client 2, stale copy
+
+    const { entries, ghosts } = await dump(db)
+    expect(entries.map((e) => e._id)).toEqual([final._id])
+    expect(final).toMatchObject({ date: '2026-11-25', dateHistory: ['2026-11-20', '2026-11-21'] })
+    expect((ghosts as GhostEntry[]).map((g) => [g.date, g.ref])).toEqual([
+      ['2026-11-20', final._id],
+      ['2026-11-21', final._id],
+    ])
+  })
+
+  it('reports an entry that was deleted instead of resurrecting it', async () => {
+    const { db, bujo } = newBujo()
+    const stale = await bujo.addEntry('2026-11-21', 'task', 'Deleted elsewhere')
+    await bujo.deleteEntry(stale)
+
+    await expect(bujo.completeEntry(stale)).rejects.toBeInstanceOf(NotFoundError)
+    expect((await dump(db)).entries).toHaveLength(0)
+  })
+
+  it('deletes a moved entry where it now lives', async () => {
+    const { db, bujo } = newBujo()
+    const stale = await bujo.addEntry('2026-11-20', 'task', 'Moved then deleted')
+    await bujo.rescheduleEntry(stale, '2026-11-21')
+
+    await bujo.deleteEntry(stale)
+    const { entries, ghosts } = await dump(db)
+    expect(entries).toHaveLength(0)
+    expect(ghosts).toHaveLength(0)
+  })
+
   it('deletes an entry even when the caller holds a stale revision', async () => {
     const { db, bujo } = newBujo()
     const entry = await bujo.addEntry('2026-11-21', 'task', 'short lived')

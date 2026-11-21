@@ -5,9 +5,10 @@
   "description": "Bullet Journal CLI for humans and agents",
   "type": "module",
   "bin": {
-    "bujo": "./dist/bujo.cjs"
+    "bujo": "./bin/bujo.cjs"
   },
   "files": [
+    "bin",
     "dist"
   ],
   "engines": {
