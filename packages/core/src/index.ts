@@ -1,5 +1,15 @@
 export * from './types'
 export * from './tags'
 export * from './ids'
+export * from './dates'
 export * from './errors'
-export { createBujo, type Bujo, type FindOptions } from './store'
+export {
+  createBujo,
+  isClosed,
+  isOpen,
+  movesOf,
+  type Bujo,
+  type EntryChanges,
+  type FindOptions,
+  type NewEntryFields,
+} from './store'

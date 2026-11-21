@@ -1,9 +1,9 @@
+import { dateKind, isDayDate, isMonthKey, monthKey } from './dates'
 import { AmbiguousError, InvalidError, NotFoundError, isConflict, isMissing } from './errors'
 import { idTail, makeGhostId, makeId, refOf, withDate } from './ids'
 import { DEFAULT_TAG_COLORS, makeTagId, parseTags } from './tags'
 import {
   UNSCHEDULED,
-  isScheduledDate,
   type AnyDoc,
   type BujoDb,
   type BujoEntry,
@@ -12,12 +12,31 @@ import {
   type DbWriteResult,
   type DisplayEntry,
   type GhostEntry,
+  type GoalState,
   type StoredDoc,
   type TagDoc,
 } from './types'
 
 /** How many times a write is retried after a revision conflict. */
 const MAX_RETRIES = 5
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
+
+/** Optional fields when creating an entry. */
+export interface NewEntryFields {
+  priority?: boolean
+  /** `HH:MM`, events only */
+  time?: string
+}
+
+/** Fields `updateEntry` can change. `null` clears an optional field. */
+export interface EntryChanges {
+  status?: BujoStatus
+  body?: string
+  priority?: boolean
+  time?: string | null
+  goalState?: GoalState | null
+}
 
 /** How to pick between several entries matching a body substring. */
 export interface FindOptions {
@@ -27,6 +46,43 @@ export interface FindOptions {
    * when none of them match. Refs and ids are always matched exactly.
    */
   prefer?: (entry: BujoEntry) => boolean
+}
+
+/** Still to do: an open task, or a goal that is neither achieved nor dropped. */
+export function isOpen(entry: BujoEntry): boolean {
+  return entry.status === 'task' || (entry.status === 'goal' && !entry.goalState)
+}
+
+/** Finished one way or the other: completed, dropped, or a goal with an outcome. */
+export function isClosed(entry: BujoEntry): boolean {
+  return (
+    entry.status === 'completed' ||
+    entry.status === 'dropped' ||
+    (entry.status === 'goal' && !!entry.goalState)
+  )
+}
+
+/** How many times an entry has been rescheduled. */
+export function movesOf(entry: BujoEntry): number {
+  return entry.dateHistory?.length ?? 0
+}
+
+/** Goals live on a week or a month; everything else on a day, a month or nowhere yet. */
+function checkPlacement(status: BujoStatus, date: string): void {
+  const kind = dateKind(date)
+  if (!kind) throw new InvalidError(`Invalid date "${date}"`)
+  if (status === 'goal') {
+    if (kind !== 'week' && kind !== 'month') {
+      throw new InvalidError('A goal is dated by week (YYYY-Www) or month (YYYY-MM)')
+    }
+  } else if (kind === 'week') {
+    throw new InvalidError('Only goals can be dated by week; use a day, a month (YYYY-MM) or unscheduled')
+  }
+}
+
+function checkTime(time: string, status: BujoStatus): void {
+  if (!TIME_RE.test(time)) throw new InvalidError(`Invalid time "${time}"; use 24h HH:MM`)
+  if (status !== 'event') throw new InvalidError('Only events can have a time')
 }
 
 /**
@@ -44,8 +100,12 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
     return options.userId ? { ...doc, userId: options.userId } : doc
   }
 
-  async function rangeDocs(startkey: string, endkey: string): Promise<AnyDoc[]> {
-    const result = await db.allDocs({ include_docs: true, startkey, endkey })
+  async function rangeDocs(startkey: string | undefined, endkey: string): Promise<AnyDoc[]> {
+    const result = await db.allDocs({
+      include_docs: true,
+      ...(startkey === undefined ? {} : { startkey }),
+      endkey,
+    })
     return result.rows.map((r) => r.doc as AnyDoc)
   }
 
@@ -61,6 +121,18 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
       if (isMissing(err)) return null
       throw err
     }
+  }
+
+  /** Fetch several documents in one round trip. Missing ones are left out. */
+  async function getMany(ids: string[]): Promise<Map<string, AnyDoc>> {
+    const found = new Map<string, AnyDoc>()
+    const keys = [...new Set(ids)]
+    if (keys.length === 0) return found
+    const result = await db.allDocs({ include_docs: true, keys })
+    for (const row of result.rows) {
+      if (row.doc && !row.value?.deleted) found.set(row.id, row.doc as AnyDoc)
+    }
+    return found
   }
 
   /**
@@ -82,12 +154,8 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
   // ─── Tags ────────────────────────────────────────────────────────
 
   async function getTag(name: string): Promise<TagDoc | null> {
-    try {
-      const doc = (await db.get(makeTagId(name))) as AnyDoc
-      return doc.type === 'tag' ? doc : null
-    } catch {
-      return null
-    }
+    const doc = await getOrNull(makeTagId(name))
+    return doc?.type === 'tag' ? doc : null
   }
 
   async function getAllTags(): Promise<TagDoc[]> {
@@ -97,17 +165,11 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
 
   async function setTagColor(name: string, color: string): Promise<void> {
     const id = makeTagId(name)
-    let existing: TagDoc | null = null
-    try {
-      existing = (await db.get(id)) as TagDoc
-    } catch {
-      existing = null
-    }
-    if (existing) {
-      await db.put(stamp({ ...existing, color }))
-    } else {
-      await db.put(stamp<TagDoc>({ _id: id, type: 'tag', name: name.toLowerCase(), color }))
-    }
+    const existing = await getTag(name)
+    const doc: TagDoc = existing
+      ? { ...existing, color }
+      : { _id: id, type: 'tag', name: name.toLowerCase(), color }
+    await putOver(stamp(doc), existing?._rev)
   }
 
   /** Ensure tag docs exist for all given tag names (auto-assign colors) */
@@ -142,8 +204,22 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
 
   // ─── CRUD ────────────────────────────────────────────────────────
 
-  async function addEntry(date: string, status: BujoStatus, body: string): Promise<BujoEntry> {
-    const tags = parseTags(body)
+  /**
+   * Create an entry. `date` is a day, a month key (future log), a week or
+   * month key for a goal, or UNSCHEDULED.
+   */
+  async function addEntry(
+    date: string,
+    status: BujoStatus,
+    body: string,
+    fields: NewEntryFields = {},
+  ): Promise<BujoEntry> {
+    const text = body.trim()
+    if (!text) throw new InvalidError('Entry text cannot be empty')
+    checkPlacement(status, date)
+    if (fields.time !== undefined) checkTime(fields.time, status)
+
+    const tags = parseTags(text)
     if (tags.length > 0) await ensureTagDocs(tags)
     const createdAt = now()
     const entry: BujoEntry = stamp({
@@ -151,32 +227,45 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
       type: 'entry',
       date,
       status,
-      body,
+      body: text,
       createdAt,
       ...(tags.length > 0 ? { tags } : {}),
+      ...(fields.priority ? { priority: true } : {}),
+      ...(fields.time !== undefined ? { time: fields.time } : {}),
     })
     const res = await db.put(entry)
     return { ...entry, _rev: res.rev }
   }
 
+  /** Create a goal for a week (`YYYY-Www`) or a month (`YYYY-MM`). */
+  function addGoal(period: string, body: string, fields: Pick<NewEntryFields, 'priority'> = {}): Promise<BujoEntry> {
+    return addEntry(period, 'goal', body, fields)
+  }
+
   /**
-   * Change fields of an entry. `entry` may be stale: on a revision conflict
-   * the change is re-applied to the latest stored version.
+   * Apply `change` to an entry and store the result. `entry` may be stale:
+   * on a revision conflict the change is re-applied to the latest stored
+   * version. `change` returns null when there is nothing to do.
    */
-  async function updateEntry(
+  async function mutateEntry(
     entry: BujoEntry,
-    fields: Partial<Pick<BujoEntry, 'status' | 'body'>>,
+    change: (current: BujoEntry) => BujoEntry | null,
   ): Promise<BujoEntry> {
     let base = entry
     for (let attempt = 0; ; attempt++) {
-      const merged: BujoEntry = { ...base, ...fields }
-      const tags = parseTags(merged.body)
-      if (tags.length > 0) await ensureTagDocs(tags)
-      if (tags.length > 0) merged.tags = tags
-      else delete merged.tags
+      const next = change(base)
+      if (!next) return base
+      const tags = parseTags(next.body)
+      if (tags.length > 0) {
+        await ensureTagDocs(tags)
+        next.tags = tags
+      } else {
+        delete next.tags
+      }
+      const doc = stamp(next)
       try {
-        const res = await db.put(stamp(merged))
-        return { ...merged, _rev: res.rev }
+        const res = await db.put(doc)
+        return { ...doc, _rev: res.rev }
       } catch (err) {
         if (!isConflict(err) || attempt >= MAX_RETRIES) throw err
         const latest = await getOrNull(entry._id)
@@ -184,6 +273,83 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
         base = latest
       }
     }
+  }
+
+  /** Change fields of an entry. To change its date, use `rescheduleEntry`. */
+  function updateEntry(entry: BujoEntry, fields: EntryChanges): Promise<BujoEntry> {
+    return mutateEntry(entry, (current) => {
+      const next: BujoEntry = { ...current }
+
+      if (fields.body !== undefined) {
+        const text = fields.body.trim()
+        if (!text) throw new InvalidError('Entry text cannot be empty')
+        next.body = text
+      }
+      if (fields.status !== undefined && fields.status !== current.status) {
+        if (fields.status === 'goal' || current.status === 'goal') {
+          throw new InvalidError('A goal cannot be turned into another kind of entry, or back')
+        }
+        checkPlacement(fields.status, current.date)
+        next.status = fields.status
+      }
+      if (fields.priority !== undefined) {
+        if (fields.priority) next.priority = true
+        else delete next.priority
+      }
+      if (fields.time !== undefined) {
+        if (fields.time === null || fields.time === '') {
+          delete next.time
+        } else {
+          checkTime(fields.time, next.status)
+          next.time = fields.time
+        }
+      }
+      if (fields.goalState !== undefined) {
+        if (next.status !== 'goal') throw new InvalidError('Only goals have a goal state')
+        if (fields.goalState === null) delete next.goalState
+        else next.goalState = fields.goalState
+      }
+      return next
+    })
+  }
+
+  function closeEntry(entry: BujoEntry, outcome: 'completed' | 'dropped'): Promise<BujoEntry> {
+    return mutateEntry(entry, (current) => {
+      if (current.status === 'goal') {
+        const goalState: GoalState = outcome === 'completed' ? 'achieved' : 'dropped'
+        return current.goalState === goalState ? null : { ...current, goalState }
+      }
+      if (current.status === outcome) return null
+      const next: BujoEntry = { ...current, status: outcome }
+      // Remember what a note or event was, so reopening restores it.
+      if (!isClosed(current) && current.status !== 'task') next.prevStatus = current.status
+      return next
+    })
+  }
+
+  /** Mark an entry done (a goal: achieved). */
+  function completeEntry(entry: BujoEntry): Promise<BujoEntry> {
+    return closeEntry(entry, 'completed')
+  }
+
+  /** Mark an entry as no longer relevant. */
+  function dropEntry(entry: BujoEntry): Promise<BujoEntry> {
+    return closeEntry(entry, 'dropped')
+  }
+
+  /** Undo `completeEntry` / `dropEntry`. Does nothing to an entry that is not closed. */
+  function reopenEntry(entry: BujoEntry): Promise<BujoEntry> {
+    return mutateEntry(entry, (current) => {
+      if (!isClosed(current)) return null
+      const next: BujoEntry = { ...current }
+      if (current.status === 'goal') {
+        delete next.goalState
+      } else {
+        next.status = current.prevStatus ?? 'task'
+        delete next.prevStatus
+      }
+      return next
+    })
   }
 
   async function deleteEntry(entry: BujoEntry): Promise<void> {
@@ -217,7 +383,7 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
    * entry under the new id and deleting the old one.
    *
    * - `dateHistory` gains the date the entry is leaving
-   * - a ghost is left on the old date (so it shows as ">" there)
+   * - a ghost is left on the old date if it was a day (so it shows as ">" there)
    * - the entry's other ghosts are repointed at the new id
    * - a ghost on the destination date is removed: the entry is back there
    *
@@ -230,6 +396,7 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
     const oldId = entry._id
     const oldDate = entry.date
     if (newDate === oldDate) return entry
+    checkPlacement(entry.status, newDate)
     const newId = withDate(oldId, newDate)
 
     let source = entry
@@ -284,8 +451,9 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
           if (ghost.ref !== newId) ops.push(stamp({ ...ghost, ref: newId }))
         }
       }
-      // Leave a ghost on the date the entry is leaving (skip for special dates)
-      if (isScheduledDate(oldDate) && !haunted.has(oldDate)) {
+      // Leave a ghost on the day the entry is leaving. Months, weeks and the
+      // unscheduled list are not days: nothing to haunt there.
+      if (isDayDate(oldDate) && !haunted.has(oldDate)) {
         const ghost: GhostEntry = {
           _id: makeGhostId(oldDate, newId),
           type: 'ghost',
@@ -323,35 +491,35 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
     )
   }
 
-  async function getGhostsForDateRange(startDate: string, endDate: string): Promise<GhostEntry[]> {
-    const docs = await rangeDocs(`ghost:${startDate}:`, `ghost:${endDate}:\ufff0`)
-    return docs.filter((d): d is GhostEntry => d.type === 'ghost')
-  }
-
   /** Resolve a ghost to its parent entry, or null if parent was deleted */
   async function resolveGhost(ghost: GhostEntry): Promise<BujoEntry | null> {
-    try {
-      const doc = (await db.get(ghost.ref)) as AnyDoc
-      return doc.type === 'entry' ? doc : null
-    } catch {
-      return null
-    }
+    const doc = await getOrNull(ghost.ref)
+    return doc?.type === 'entry' ? doc : null
   }
 
-  /** Entries dated within [startDate, endDate], plus ghosts left on those dates. */
+  /**
+   * Entries on the days within [startDate, endDate], plus the ghosts left on
+   * those days by entries that moved away. Oldest first.
+   *
+   * Week- and month-dated entries (goals, future log) are not part of any
+   * day: get those with `getEntriesForPeriod`.
+   */
   async function getEntriesForDateRange(startDate: string, endDate: string): Promise<DisplayEntry[]> {
-    // Get real entries by _id prefix range
+    // Real entries by _id prefix range. Month keys sort between the days of
+    // neighbouring months, so a range spanning two months picks some up.
     const docs = await rangeDocs(`${startDate}:`, `${endDate}:\ufff0`)
     const entries: DisplayEntry[] = docs
-      .filter((d): d is BujoEntry => d.type === 'entry')
+      .filter((d): d is BujoEntry => d.type === 'entry' && isDayDate(d.date))
       .map((entry) => ({ entry, isGhost: false }))
 
-    // Get ghosts for this date range and resolve them
-    const ghosts = await getGhostsForDateRange(startDate, endDate)
+    // Ghosts in the range, resolved to the entries they stand for
+    const ghostDocs = await rangeDocs(`ghost:${startDate}:`, `ghost:${endDate}:\ufff0`)
+    const ghosts = ghostDocs.filter((d): d is GhostEntry => d.type === 'ghost' && isDayDate(d.date))
+    const parents = await getMany(ghosts.map((g) => g.ref))
     for (const ghost of ghosts) {
-      const parent = await resolveGhost(ghost)
+      const parent = parents.get(ghost.ref)
       // A ghost on the day its entry currently sits on says nothing: skip it.
-      if (parent && parent.date !== ghost.date) {
+      if (parent?.type === 'entry' && parent.date !== ghost.date) {
         entries.push({ entry: parent, isGhost: true, ghostDoc: ghost })
       }
     }
@@ -364,9 +532,32 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
     return getEntriesForDateRange(date, date)
   }
 
-  async function getUnscheduledEntries(): Promise<BujoEntry[]> {
-    const docs = await rangeDocs(`${UNSCHEDULED}:`, `${UNSCHEDULED}:\ufff0`)
-    return docs.filter((d): d is BujoEntry => d.type === 'entry')
+  /**
+   * Entries dated to exactly this value: a week key or month key (goals and,
+   * for months, future log items), a day (without ghosts), or UNSCHEDULED.
+   * Oldest first.
+   */
+  async function getEntriesForPeriod(period: string): Promise<BujoEntry[]> {
+    const docs = await rangeDocs(`${period}:`, `${period}:\ufff0`)
+    return docs
+      .filter((d): d is BujoEntry => d.type === 'entry' && d.date === period)
+      .sort((a, b) => a.createdAt - b.createdAt)
+  }
+
+  /** The goals of a week (`YYYY-Www`) or month (`YYYY-MM`), oldest first. */
+  async function getGoals(period: string): Promise<BujoEntry[]> {
+    const entries = await getEntriesForPeriod(period)
+    return entries.filter((e) => e.status === 'goal')
+  }
+
+  function getUnscheduledEntries(): Promise<BujoEntry[]> {
+    return getEntriesForPeriod(UNSCHEDULED)
+  }
+
+  /** Future log items: non-goal entries dated to a month rather than a day. */
+  async function getMonthScheduledEntries(): Promise<BujoEntry[]> {
+    const entries = await getAllEntries()
+    return entries.filter((e) => e.status !== 'goal' && isMonthKey(e.date))
   }
 
   async function getAllEntries(): Promise<BujoEntry[]> {
@@ -424,16 +615,41 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
 
   // ─── Migration ───────────────────────────────────────────────────
 
-  /** Move every open task dated before `today` onto `today`. Returns how many moved. */
-  async function migrateOpenTasks(today: string): Promise<number> {
-    const entries = await getAllEntries()
-    const stale = entries.filter(
-      (e) => e.status === 'task' && isScheduledDate(e.date) && e.date < today,
-    )
-    for (const entry of stale) {
-      await rescheduleEntry(entry, today)
+  /**
+   * Open tasks whose date has passed: a day before `today`, or a month
+   * before the current one. Oldest date first.
+   */
+  async function getOverdueTasks(today: string): Promise<BujoEntry[]> {
+    // Everything that sorts before today's first id: all earlier days, and
+    // the month keys of all earlier months.
+    const docs = await rangeDocs(undefined, `${today}:`)
+    const thisMonth = monthKey(today)
+    return docs
+      .filter((d): d is BujoEntry => {
+        if (d.type !== 'entry' || d.status !== 'task') return false
+        if (isDayDate(d.date)) return d.date < today
+        return isMonthKey(d.date) && d.date < thisMonth
+      })
+      .sort((a, b) => (a.date === b.date ? a.createdAt - b.createdAt : a.date < b.date ? -1 : 1))
+  }
+
+  /** Move every overdue open task onto `today`. Returns the moved entries. */
+  async function migrateOpenTasks(today: string): Promise<BujoEntry[]> {
+    if (!isDayDate(today)) throw new InvalidError(`Invalid date "${today}"`)
+    const overdue = await getOverdueTasks(today)
+    const moved: BujoEntry[] = []
+    for (const entry of overdue) {
+      moved.push(await rescheduleEntry(entry, today))
     }
-    return stale.length
+    return moved
+  }
+
+  /** Open tasks rescheduled at least `minMoves` times, most-moved first. */
+  async function getStaleTasks(minMoves = 3): Promise<BujoEntry[]> {
+    const entries = await getAllEntries()
+    return entries
+      .filter((e) => e.status === 'task' && movesOf(e) >= minMoves)
+      .sort((a, b) => movesOf(b) - movesOf(a) || a.createdAt - b.createdAt)
   }
 
   return {
@@ -442,7 +658,11 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
     setTagColor,
     getEntriesForTag,
     addEntry,
+    addGoal,
     updateEntry,
+    completeEntry,
+    dropEntry,
+    reopenEntry,
     deleteEntry,
     rescheduleEntry,
     resolveGhost,
@@ -452,8 +672,13 @@ export function createBujo(db: BujoDb, options: BujoOptions = {}) {
     findEntries,
     getEntriesForDate,
     getEntriesForDateRange,
+    getEntriesForPeriod,
+    getGoals,
     getUnscheduledEntries,
+    getMonthScheduledEntries,
+    getOverdueTasks,
     migrateOpenTasks,
+    getStaleTasks,
   }
 }
 

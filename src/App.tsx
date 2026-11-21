@@ -131,7 +131,7 @@ export default function App() {
 
       {view === 'daily' && <DailyLog initialDate={dailyDate} onOpenDetail={openDetail} onTagClick={navigateToTag} />}
       {view === 'weekly' && <WeeklyLog onNavigateToDay={navigateToDay} onOpenDetail={openDetail} onTagClick={navigateToTag} />}
-      {view === 'monthly' && <MonthlyLog onNavigateToDay={navigateToDay} onTagClick={navigateToTag} />}
+      {view === 'monthly' && <MonthlyLog onNavigateToDay={navigateToDay} onOpenDetail={openDetail} onTagClick={navigateToTag} />}
       {view === 'future' && <FutureLog onOpenDetail={openDetail} onTagClick={navigateToTag} />}
       {view === 'tags' && <TagView onOpenDetail={openDetail} onTagClick={navigateToTag} initialTag={selectedTag} onClearInitialTag={() => setSelectedTag(null)} />}
 

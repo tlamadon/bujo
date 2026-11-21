@@ -1,32 +1,18 @@
 import { useState, useCallback, useMemo } from 'react'
 import {
   addEntry,
-  updateEntry,
   UNSCHEDULED,
   type BujoStatus,
   type BujoEntry,
 } from './db'
-import { useUnscheduledEntries } from './hooks'
+import { useMonthScheduledEntries, useUnscheduledEntries } from './hooks'
 import EditableEntry from './EditableEntry'
+import { cycleEntryStatus } from './entryActions'
+import { NEW_ENTRY_STATUSES, STATUS_ICONS, STATUS_ORDER, entryClass, entryIcon } from './statusMeta'
 
-const STATUS_ICONS: Record<BujoStatus, string> = {
-  task: '•',
-  completed: '✕',
-  migrated: '>',
-  scheduled: '>',
-  note: '–',
-  event: '○',
-}
-
-const STATUS_CYCLE: BujoStatus[] = ['task', 'completed', 'note', 'event']
-
-const STATUS_ORDER: Record<BujoStatus, number> = {
-  task: 0,
-  migrated: 1,
-  scheduled: 2,
-  completed: 3,
-  note: 4,
-  event: 5,
+function formatMonth(month: string): string {
+  const [year, m] = month.split('-').map(Number)
+  return new Date(year, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 }
 
 interface Props {
@@ -49,6 +35,21 @@ export default function FutureLog({ onOpenDetail, onTagClick }: Props) {
     })
   }, [rawEntries])
 
+  // Entries scheduled for a month rather than a day, grouped by month
+  const rawMonthEntries = useMonthScheduledEntries()
+  const byMonth = useMemo(() => {
+    const groups = new Map<string, BujoEntry[]>()
+    for (const entry of rawMonthEntries ?? []) {
+      groups.set(entry.date, [...(groups.get(entry.date) ?? []), entry])
+    }
+    return [...groups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, list]) => ({
+        month,
+        entries: list.sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.createdAt - b.createdAt),
+      }))
+  }, [rawMonthEntries])
+
   const handleAdd = useCallback(async () => {
     const trimmed = newBody.trim()
     if (!trimmed) return
@@ -56,12 +57,6 @@ export default function FutureLog({ onOpenDetail, onTagClick }: Props) {
     setNewBody('')
     setNewStatus('task')
   }, [newBody, newStatus])
-
-  const cycleStatus = useCallback(async (entry: BujoEntry) => {
-    const idx = STATUS_CYCLE.indexOf(entry.status)
-    const next = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length]
-    await updateEntry(entry, { status: next })
-  }, [])
 
   return (
     <div className="future-log">
@@ -75,11 +70,11 @@ export default function FutureLog({ onOpenDetail, onTagClick }: Props) {
           <li className="empty">No unscheduled entries.</li>
         ) : (
           entries.map((entry) => (
-            <li key={entry._id} className={`entry status-${entry.status}`}>
+            <li key={entry._id} className={`entry ${entryClass(entry)}`}>
               <EditableEntry
                 entry={entry}
-                statusIcon={STATUS_ICONS[entry.status]}
-                onCycleStatus={cycleStatus}
+                statusIcon={entryIcon(entry)}
+                onCycleStatus={cycleEntryStatus}
                 onOpenDetail={onOpenDetail}
                 onTagClick={onTagClick}
               />
@@ -87,6 +82,25 @@ export default function FutureLog({ onOpenDetail, onTagClick }: Props) {
           ))
         )}
       </ul>
+
+      {byMonth.map(({ month, entries: monthEntries }) => (
+        <section key={month} className="future-month">
+          <h3 className="future-month-title">{formatMonth(month)}</h3>
+          <ul className="entry-list">
+            {monthEntries.map((entry) => (
+              <li key={entry._id} className={`entry ${entryClass(entry)}`}>
+                <EditableEntry
+                  entry={entry}
+                  statusIcon={entryIcon(entry)}
+                  onCycleStatus={cycleEntryStatus}
+                  onOpenDetail={onOpenDetail}
+                  onTagClick={onTagClick}
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
 
       <form
         className="new-entry"
@@ -99,9 +113,9 @@ export default function FutureLog({ onOpenDetail, onTagClick }: Props) {
           value={newStatus}
           onChange={(e) => setNewStatus(e.target.value as BujoStatus)}
         >
-          {Object.entries(STATUS_ICONS).map(([s, icon]) => (
+          {NEW_ENTRY_STATUSES.map((s) => (
             <option key={s} value={s}>
-              {icon} {s}
+              {STATUS_ICONS[s]} {s}
             </option>
           ))}
         </select>

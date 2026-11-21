@@ -1,16 +1,8 @@
 import { useState, useCallback, useMemo, useEffect } from 'react'
-import { addEntry, setTagColor, stripTags, isScheduledDate, UNSCHEDULED, type BujoEntry, type BujoStatus } from './db'
+import { addEntry, setTagColor, stripTags, isScheduledDate, UNSCHEDULED, type BujoEntry } from './db'
 import { useTags, useEntriesForTag } from './hooks'
 import TagPills from './TagPills'
-
-const STATUS_ICONS: Record<BujoStatus, string> = {
-  task: '•',
-  completed: '✕',
-  migrated: '>',
-  scheduled: '>',
-  note: '–',
-  event: '○',
-}
+import { entryClass, entryIcon } from './statusMeta'
 
 const COLOR_PALETTE = [
   '#7aa2d4', '#d4a27a', '#b39ddb', '#4caf50', '#e57373',
@@ -91,9 +83,9 @@ function TagDetail({ tagName, tagColor, onBack, onOpenDetail, onTagClick }: TagD
       ) : (
         <ul className="entry-list">
           {sortedEntries.map((entry) => (
-            <li key={entry._id} className={`entry status-${entry.status}`}>
+            <li key={entry._id} className={`entry ${entryClass(entry)}`}>
               <span className="signifier-static">
-                {STATUS_ICONS[entry.status]}
+                {entryIcon(entry)}
               </span>
               <span className="tag-entry-date">
                 {isScheduledDate(entry.date) ? entry.date : '—'}
@@ -103,6 +95,7 @@ function TagDetail({ tagName, tagColor, onBack, onOpenDetail, onTagClick }: TagD
                 onClick={() => onOpenDetail?.(entry)}
                 style={{ cursor: onOpenDetail ? 'pointer' : undefined }}
               >
+                {entry.priority && <span className="priority-marker" title="Priority">*</span>}
                 {stripTags(entry.body)}
                 <TagPills tags={entry.tags?.filter((t) => t !== tagName)} small onTagClick={onTagClick} />
               </span>
@@ -141,11 +134,16 @@ export default function TagView({ onOpenDetail, onTagClick, initialTag, onClearI
   const tags = useTags()
   const [selectedTag, setSelectedTag] = useState<string | null>(initialTag ?? null)
 
+  // Follow the tag the parent asks for. Done while rendering (not in an
+  // effect) so the selection changes in the same pass as the prop.
+  const [seenInitialTag, setSeenInitialTag] = useState(initialTag)
+  if (initialTag !== seenInitialTag) {
+    setSeenInitialTag(initialTag)
+    if (initialTag) setSelectedTag(initialTag)
+  }
+
   useEffect(() => {
-    if (initialTag) {
-      setSelectedTag(initialTag)
-      onClearInitialTag?.()
-    }
+    if (initialTag) onClearInitialTag?.()
   }, [initialTag, onClearInitialTag])
 
   const selectedTagDoc = useMemo(

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { UNSCHEDULED, type BujoEntry, type GhostEntry } from '../src'
+import { UNSCHEDULED, type GhostEntry } from '../src'
 import { dump, newBujo } from './helpers'
 
 describe('reschedule', () => {
@@ -74,39 +74,5 @@ describe('reschedule', () => {
     await db.remove(moved._id, moved._rev!)
     expect(await bujo.resolveGhost(ghost)).toBeNull()
     expect(await bujo.getEntriesForDate('2026-11-19')).toEqual([])
-  })
-})
-
-describe('migrate', () => {
-  it('moves past open tasks to today and nothing else', async () => {
-    const { db, bujo } = newBujo()
-    await bujo.addEntry('2026-11-18', 'task', 'old open')
-    await bujo.addEntry('2026-11-19', 'completed', 'old done')
-    await bujo.addEntry('2026-11-19', 'note', 'old note')
-    await bujo.addEntry('2026-11-19', 'event', 'old event')
-    await bujo.addEntry('2026-11-21', 'task', 'today open')
-    await bujo.addEntry('2026-11-25', 'task', 'future open')
-    await bujo.addEntry(UNSCHEDULED, 'task', 'someday')
-
-    expect(await bujo.migrateOpenTasks('2026-11-21')).toBe(1)
-
-    const byBody = Object.fromEntries(
-      ((await dump(db)).entries as BujoEntry[]).map((e) => [e.body, e]),
-    )
-    expect(byBody['old open']).toMatchObject({ date: '2026-11-21', dateHistory: ['2026-11-18'] })
-    expect(byBody['old done'].date).toBe('2026-11-19')
-    expect(byBody['old note'].date).toBe('2026-11-19')
-    expect(byBody['old event'].date).toBe('2026-11-19')
-    expect(byBody['future open'].date).toBe('2026-11-25')
-    expect(byBody['someday'].date).toBe(UNSCHEDULED)
-
-    const yesterday = await bujo.getEntriesForDate('2026-11-18')
-    expect(yesterday.map((d) => [d.entry.body, d.isGhost])).toEqual([['old open', true]])
-  })
-
-  it('is a no-op when nothing is overdue', async () => {
-    const { bujo } = newBujo()
-    await bujo.addEntry('2026-11-21', 'task', 'today')
-    expect(await bujo.migrateOpenTasks('2026-11-21')).toBe(0)
   })
 })

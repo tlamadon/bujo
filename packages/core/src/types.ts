@@ -6,6 +6,11 @@ export type BujoStatus =
   | 'scheduled'  // > (moved to future log)
   | 'note'       // – (dash)
   | 'event'      // ○ (circle)
+  | 'dropped'    // struck through: cancelled / no longer relevant
+  | 'goal'       // a weekly or monthly goal; progress is in `goalState`
+
+/** How a goal ended. A goal without a state is still open. */
+export type GoalState = 'achieved' | 'dropped'
 
 /** Special date values (sort after ISO dates via ~ prefix) */
 export const UNSCHEDULED = '~unscheduled'
@@ -19,7 +24,11 @@ export interface BujoEntry {
   _id: string
   _rev?: string
   type: 'entry'
-  /** ISO date string YYYY-MM-DD, or a special value like UNSCHEDULED */
+  /**
+   * When the entry is for. A day `YYYY-MM-DD`, a month `YYYY-MM` (future log
+   * items and monthly goals), an ISO week `YYYY-Www` (weekly goals), or
+   * UNSCHEDULED. See dates.ts.
+   */
   date: string
   status: BujoStatus
   body: string
@@ -29,6 +38,14 @@ export interface BujoEntry {
   dateHistory?: string[]
   /** Tags extracted from body text (e.g. #work, #home) */
   tags?: string[]
+  /** The BuJo `*` signifier. Absent means not a priority. */
+  priority?: boolean
+  /** Time of day `HH:MM` (24h). Events only. */
+  time?: string
+  /** Goals only: how the goal ended. Absent while it is open. */
+  goalState?: GoalState
+  /** The status an entry had before it was completed or dropped, so it can be reopened as that. */
+  prevStatus?: BujoStatus
 }
 
 export interface TagDoc {
@@ -95,6 +112,8 @@ export interface AllDocsOptions {
   include_docs?: boolean
   startkey?: string
   endkey?: string
+  /** Fetch exactly these ids. Rows for missing or deleted ids carry no `doc`. */
+  keys?: string[]
 }
 
 export interface BujoDb {

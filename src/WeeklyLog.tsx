@@ -1,36 +1,18 @@
 import { useState, useCallback, useMemo } from 'react'
 import {
   addEntry,
-  updateEntry,
+  isoWeekKey,
   stripTags,
-  type BujoStatus,
   type BujoEntry,
   type DisplayEntry,
 } from './db'
+import { cycleEntryStatus } from './entryActions'
+import GoalsSection from './GoalsSection'
+import { STATUS_ORDER, entryClass, entryIcon } from './statusMeta'
 import { useEntriesForDateRange } from './hooks'
 import EditableEntry from './EditableEntry'
 import { relativeWeekLabel } from './relativeLabel'
 import { toISODate, parseDate } from './dateUtils'
-
-const STATUS_ICONS: Record<BujoStatus, string> = {
-  task: '•',
-  completed: '✕',
-  migrated: '>',
-  scheduled: '>',
-  note: '–',
-  event: '○',
-}
-
-const STATUS_CYCLE: BujoStatus[] = ['task', 'completed', 'note', 'event']
-
-const STATUS_ORDER: Record<BujoStatus, number> = {
-  task: 0,
-  migrated: 1,
-  scheduled: 2,
-  completed: 3,
-  note: 4,
-  event: 5,
-}
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -90,12 +72,6 @@ export default function WeeklyLog({ onNavigateToDay, onOpenDetail, onTagClick }:
     })
   }
 
-  const cycleStatus = useCallback(async (entry: BujoEntry) => {
-    const idx = STATUS_CYCLE.indexOf(entry.status)
-    const next = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length]
-    await updateEntry(entry, { status: next })
-  }, [])
-
   // Quick-add state per day
   const [addingDay, setAddingDay] = useState<string | null>(null)
   const [newBody, setNewBody] = useState('')
@@ -132,6 +108,13 @@ export default function WeeklyLog({ onNavigateToDay, onOpenDetail, onTagClick }:
           <button className="now-btn" onClick={() => setWeekStart(getMonday(new Date()))}>Now</button>
         )}
       </div>
+
+      <GoalsSection
+        period={isoWeekKey(weekDates[0])}
+        title="Goals this week"
+        onOpenDetail={onOpenDetail}
+        onTagClick={onTagClick}
+      />
 
       <div className="week-grid">
         {weekDates.map((date, i) => {
@@ -193,7 +176,7 @@ export default function WeeklyLog({ onNavigateToDay, onOpenDetail, onTagClick }:
                   {dayEntries.map((de) => (
                     <li
                       key={de.isGhost ? `ghost-${de.ghostDoc?._id}` : de.entry._id}
-                      className={`week-entry ${de.isGhost ? 'status-scheduled ghost-entry' : `status-${de.entry.status}`}`}
+                      className={`week-entry ${de.isGhost ? 'status-scheduled ghost-entry' : entryClass(de.entry)}`}
                     >
                       {de.isGhost ? (
                         <button
@@ -210,8 +193,8 @@ export default function WeeklyLog({ onNavigateToDay, onOpenDetail, onTagClick }:
                       ) : (
                         <EditableEntry
                           entry={de.entry}
-                          statusIcon={STATUS_ICONS[de.entry.status]}
-                          onCycleStatus={cycleStatus}
+                          statusIcon={entryIcon(de.entry)}
+                          onCycleStatus={cycleEntryStatus}
                           onOpenDetail={onOpenDetail}
                           onTagClick={onTagClick}
                         />

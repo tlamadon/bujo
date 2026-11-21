@@ -1,18 +1,11 @@
 import { useState, useMemo } from 'react'
-import { stripTags, type BujoStatus, type DisplayEntry } from './db'
-import { useEntriesForDateRange } from './hooks'
+import { stripTags, type BujoEntry, type DisplayEntry } from './db'
+import { useEntriesForDateRange, useEntriesForPeriod } from './hooks'
+import GoalsSection from './GoalsSection'
+import { entryClass, entryIcon } from './statusMeta'
 import { relativeMonthLabel } from './relativeLabel'
 import { toISODate } from './dateUtils'
 import TagPills from './TagPills'
-
-const STATUS_ICONS: Record<BujoStatus, string> = {
-  task: '•',
-  completed: '✕',
-  migrated: '>',
-  scheduled: '>',
-  note: '–',
-  event: '○',
-}
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -51,10 +44,11 @@ function buildCalendarGrid(year: number, month: number): (string | null)[][] {
 
 interface Props {
   onNavigateToDay: (date: string) => void
+  onOpenDetail?: (entry: BujoEntry) => void
   onTagClick?: (tagName: string) => void
 }
 
-export default function MonthlyLog({ onNavigateToDay, onTagClick }: Props) {
+export default function MonthlyLog({ onNavigateToDay, onOpenDetail, onTagClick }: Props) {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth())
@@ -64,6 +58,8 @@ export default function MonthlyLog({ onNavigateToDay, onTagClick }: Props) {
   const lastDate = `${year}-${pad(month + 1)}-${pad(lastDay)}`
 
   const rawEntries = useEntriesForDateRange(firstDate, lastDate)
+  // Entries scheduled for this month as a whole (no specific day)
+  const monthEntries = useEntriesForPeriod(`${year}-${pad(month + 1)}`)
 
   // Group by display date (skip ghosts for calendar dots — only show real entries)
   const byDate = useMemo(() => {
@@ -84,12 +80,11 @@ export default function MonthlyLog({ onNavigateToDay, onTagClick }: Props) {
   // Collect open tasks and events for the task list (exclude ghosts)
   const taskList = useMemo(() => {
     if (!rawEntries) return []
-    return rawEntries.filter(
-      (de) =>
-        !de.isGhost &&
-        (de.entry.status === 'task' || de.entry.status === 'event' || de.entry.status === 'scheduled'),
-    )
-  }, [rawEntries])
+    const listed = (entry: BujoEntry) =>
+      entry.status === 'task' || entry.status === 'event' || entry.status === 'scheduled'
+    const undated = (monthEntries ?? []).filter(listed).map((entry) => ({ entry, isGhost: false }))
+    return [...undated, ...rawEntries.filter((de) => !de.isGhost && listed(de.entry))]
+  }, [rawEntries, monthEntries])
 
   const shiftMonth = (dir: number) => {
     setMonth((prev) => {
@@ -128,6 +123,13 @@ export default function MonthlyLog({ onNavigateToDay, onTagClick }: Props) {
           <button className="now-btn" onClick={() => { setYear(now.getFullYear()); setMonth(now.getMonth()) }}>Now</button>
         )}
       </div>
+
+      <GoalsSection
+        period={`${year}-${pad(month + 1)}`}
+        title="Goals this month"
+        onOpenDetail={onOpenDetail}
+        onTagClick={onTagClick}
+      />
 
       {/* Calendar grid */}
       <table className="month-calendar">
@@ -195,12 +197,16 @@ export default function MonthlyLog({ onNavigateToDay, onTagClick }: Props) {
         ) : (
           <ul className="entry-list">
             {taskList.map((de) => (
-              <li key={de.entry._id} className={`entry status-${de.entry.status}`}>
+              <li key={de.entry._id} className={`entry ${entryClass(de.entry)}`}>
                 <span className="signifier-static">
-                  {STATUS_ICONS[de.entry.status]}
+                  {entryIcon(de.entry)}
                 </span>
-                <span className="month-task-date">{de.entry.date.slice(5)}</span>
+                <span className="month-task-date">{de.entry.date.slice(5) || '—'}</span>
                 <span className="body">
+                  {de.entry.priority && <span className="priority-marker" title="Priority">*</span>}
+                  {de.entry.status === 'event' && de.entry.time && (
+                    <span className="entry-time">{de.entry.time}</span>
+                  )}
                   {stripTags(de.entry.body)}
                   <TagPills tags={de.entry.tags} small onTagClick={onTagClick} />
                 </span>

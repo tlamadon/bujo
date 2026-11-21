@@ -1,37 +1,18 @@
 import { useState, useCallback, useMemo } from 'react'
 import {
   addEntry,
-  updateEntry,
   stripTags,
   migrateOpenTasks,
   type BujoStatus,
   type BujoEntry,
   type DisplayEntry,
 } from './db'
+import { cycleEntryStatus } from './entryActions'
+import { NEW_ENTRY_STATUSES, STATUS_ICONS, STATUS_ORDER, entryClass, entryIcon } from './statusMeta'
 import { useEntriesForDate } from './hooks'
 import EditableEntry from './EditableEntry'
 import { relativeDayLabel } from './relativeLabel'
 import { toISODate, parseDate } from './dateUtils'
-
-const STATUS_ICONS: Record<BujoStatus, string> = {
-  task: '•',
-  completed: '✕',
-  migrated: '>',
-  scheduled: '>',
-  note: '–',
-  event: '○',
-}
-
-const STATUS_CYCLE: BujoStatus[] = ['task', 'completed', 'note', 'event']
-
-const STATUS_ORDER: Record<BujoStatus, number> = {
-  task: 0,
-  migrated: 1,
-  scheduled: 2,
-  completed: 3,
-  note: 4,
-  event: 5,
-}
 
 function sortDisplayEntries(entries: DisplayEntry[]): DisplayEntry[] {
   return [...entries].sort((a, b) => {
@@ -74,15 +55,10 @@ export default function DailyLog({ initialDate, onOpenDetail, onTagClick }: Prop
     setNewStatus('task')
   }, [viewDate, newBody, newStatus])
 
-  const cycleStatus = useCallback(async (entry: BujoEntry) => {
-    const idx = STATUS_CYCLE.indexOf(entry.status)
-    const next = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length]
-    await updateEntry(entry, { status: next })
-  }, [])
 
   const handleMigrate = useCallback(async () => {
     const today = toISODate(new Date())
-    const count = await migrateOpenTasks(today)
+    const count = (await migrateOpenTasks(today)).length
     if (count === 0) {
       alert('No open tasks to migrate.')
     } else {
@@ -137,7 +113,7 @@ export default function DailyLog({ initialDate, onOpenDetail, onTagClick }: Prop
           entries.map((de) => (
             <li
               key={de.isGhost ? `ghost-${de.ghostDoc?._id}` : de.entry._id}
-              className={`entry ${de.isGhost ? 'status-scheduled ghost-entry' : `status-${de.entry.status}`}`}
+              className={`entry ${de.isGhost ? 'status-scheduled ghost-entry' : entryClass(de.entry)}`}
             >
               {de.isGhost ? (
                 <button
@@ -154,8 +130,8 @@ export default function DailyLog({ initialDate, onOpenDetail, onTagClick }: Prop
               ) : (
                 <EditableEntry
                   entry={de.entry}
-                  statusIcon={STATUS_ICONS[de.entry.status]}
-                  onCycleStatus={cycleStatus}
+                  statusIcon={entryIcon(de.entry)}
+                  onCycleStatus={cycleEntryStatus}
                   onOpenDetail={onOpenDetail}
                   onTagClick={onTagClick}
                 />
@@ -177,9 +153,9 @@ export default function DailyLog({ initialDate, onOpenDetail, onTagClick }: Prop
           value={newStatus}
           onChange={(e) => setNewStatus(e.target.value as BujoStatus)}
         >
-          {Object.entries(STATUS_ICONS).map(([s, icon]) => (
+          {NEW_ENTRY_STATUSES.map((s) => (
             <option key={s} value={s}>
-              {icon} {s}
+              {STATUS_ICONS[s]} {s}
             </option>
           ))}
         </select>

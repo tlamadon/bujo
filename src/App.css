@@ -1078,3 +1078,120 @@
 .tag-new-entry {
   margin-top: 1rem;
 }
+
+/* ─── Priority, time, dropped ──────────────────────── */
+.priority-marker {
+  color: #e5a13a;
+  font-weight: 700;
+  margin-right: 0.3rem;
+}
+
+.entry-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85em;
+  opacity: 0.7;
+  margin-right: 0.4rem;
+}
+
+.entry.status-dropped .body,
+.week-entry.status-dropped .body,
+.entry.goal-dropped .body {
+  text-decoration: line-through;
+  opacity: 0.4;
+}
+
+.entry.status-dropped .signifier,
+.entry.status-dropped .signifier-static,
+.week-entry.status-dropped .signifier,
+.entry.goal-dropped .signifier {
+  opacity: 0.4;
+}
+
+/* ─── Goals ────────────────────────────────────────── */
+.goals-section {
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.goals-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.goals-header h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.goals-empty {
+  opacity: 0.3;
+  font-size: 0.8rem;
+  padding: 0.1rem 0;
+}
+
+.goals-list {
+  margin: 0;
+}
+
+.goals-list .entry {
+  font-size: 0.9rem;
+  padding: 0.25rem 0;
+}
+
+.goals-list .entry:last-child {
+  border-bottom: none;
+}
+
+.entry.status-goal .signifier {
+  color: #e5a13a;
+}
+
+.entry.goal-achieved .body {
+  opacity: 0.6;
+}
+
+/* ─── Task detail: flags and ref ───────────────────── */
+.task-detail-flags {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.task-detail-priority,
+.task-detail-time {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+
+.task-detail-time input {
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 0.15rem 0.3rem;
+  font: inherit;
+}
+
+.task-detail-ref code {
+  font-family: ui-monospace, monospace;
+  user-select: all;
+}
+
+/* ─── Future log: month groups ─────────────────────── */
+.future-month {
+  margin-top: 1rem;
+}
+
+.future-month-title {
+  font-size: 0.9rem;
+  margin: 0 0 0.25rem;
+  opacity: 0.7;
+}

@@ -6,6 +6,8 @@ import {
   getEntriesForDateRange,
   getAllTags,
   getEntriesForTag,
+  getEntriesForPeriod,
+  getMonthScheduledEntries,
   getUnscheduledEntries,
   type DisplayEntry,
   type TagDoc,
@@ -278,6 +280,58 @@ export function useUnscheduledEntries(): BujoEntry[] | undefined {
 
     const load = () =>
       getUnscheduledEntries().then((docs) => {
+        if (!cancelled) setEntries(docs)
+      })
+
+    load()
+
+    const changes = localDb.changes({ since: 'now', live: true })
+    changes.on('change', () => load())
+
+    return () => {
+      cancelled = true
+      changes.cancel()
+    }
+  }, [])
+
+  return entries
+}
+
+/** Reactive hook: entries dated to a week (YYYY-Www) or month (YYYY-MM) as a whole */
+export function useEntriesForPeriod(period: string): BujoEntry[] | undefined {
+  const [entries, setEntries] = useState<BujoEntry[] | undefined>(undefined)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const load = () =>
+      getEntriesForPeriod(period).then((docs) => {
+        if (!cancelled) setEntries(docs)
+      })
+
+    load()
+
+    const changes = localDb.changes({ since: 'now', live: true })
+    changes.on('change', () => load())
+
+    return () => {
+      cancelled = true
+      changes.cancel()
+    }
+  }, [period])
+
+  return entries
+}
+
+/** Reactive hook: future log entries scheduled for a month rather than a day */
+export function useMonthScheduledEntries(): BujoEntry[] | undefined {
+  const [entries, setEntries] = useState<BujoEntry[] | undefined>(undefined)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const load = () =>
+      getMonthScheduledEntries().then((docs) => {
         if (!cancelled) setEntries(docs)
       })
 

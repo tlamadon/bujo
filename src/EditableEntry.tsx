@@ -5,7 +5,7 @@ import TagPills from './TagPills'
 interface Props {
   entry: BujoEntry
   statusIcon: string
-  onCycleStatus: (entry: BujoEntry) => void
+  onCycleStatus: (entry: BujoEntry) => void | Promise<void>
   onOpenDetail?: (entry: BujoEntry) => void
   onTagClick?: (tagName: string) => void
 }
@@ -61,6 +61,8 @@ export default function EditableEntry({ entry, statusIcon, onCycleStatus, onOpen
         />
       ) : (
         <span className="body" onClick={startEditing} title="Click to edit">
+          {entry.priority && <span className="priority-marker" title="Priority">*</span>}
+          {entry.status === 'event' && entry.time && <span className="entry-time">{entry.time}</span>}
           {stripTags(entry.body)}
           <TagPills tags={entry.tags} small onTagClick={onTagClick} />
         </span>

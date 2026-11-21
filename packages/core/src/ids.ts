@@ -37,11 +37,6 @@ export function withDate(id: string, date: string): string {
   return `${date}:${idTail(id)}`
 }
 
-/** Whether an `_id` belongs to an entry (as opposed to a ghost, tag or design doc). */
-export function isEntryId(id: string): boolean {
-  return !id.startsWith('ghost:') && !id.startsWith('tag:') && !id.startsWith('_')
-}
-
 /** One ghost per (day, entry): `ghost:${date}:${entry tail}`. */
 export function makeGhostId(date: string, entryId: string): string {
   return `ghost:${date}:${idTail(entryId)}`
