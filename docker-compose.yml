@@ -7,6 +7,11 @@ services:
     environment:
       - COUCHDB_USER=${COUCHDB_USER:-admin}
       - COUCHDB_PASSWORD=${COUCHDB_PASSWORD:-changeme}
+      # Optional: let Cloudflare Access service tokens (the bujo CLI) write.
+      # All three are needed; see "CLI access through Cloudflare" in the README.
+      - CF_ACCESS_TEAM_DOMAIN=${CF_ACCESS_TEAM_DOMAIN:-}
+      - CF_ACCESS_AUD=${CF_ACCESS_AUD:-}
+      - BUJO_SERVICE_TOKENS=${BUJO_SERVICE_TOKENS:-}
     depends_on:
       couchdb-init:
         condition: service_completed_successfully

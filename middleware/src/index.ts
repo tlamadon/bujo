@@ -1,12 +1,13 @@
 import { Hono } from 'hono'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
+import { createIdentityResolver, loadAccessConfig } from './auth.js'
 
 const app = new Hono()
 
 const COUCHDB_USER = process.env.COUCHDB_USER ?? 'admin'
 const COUCHDB_PASSWORD = process.env.COUCHDB_PASSWORD ?? 'changeme'
-const COUCHDB_URL = 'http://couchdb:5984'
+const COUCHDB_URL = (process.env.COUCHDB_URL ?? 'http://couchdb:5984').replace(/\/+$/, '')
 const COUCHDB_AUTH = 'Basic ' + Buffer.from(`${COUCHDB_USER}:${COUCHDB_PASSWORD}`).toString('base64')
 
 function couchHeaders(contentType?: string): Record<string, string> {
@@ -16,8 +17,16 @@ function couchHeaders(contentType?: string): Record<string, string> {
   }
 }
 
-function getUserId(c: { req: { header: (name: string) => string | undefined } }): string | null {
-  return c.req.header('cf-access-authenticated-user-email') ?? null
+// Browser logins are identified by Cloudflare's email header, as before.
+// Service tokens (the CLI) are accepted only when configured — see auth.ts.
+const accessConfig = loadAccessConfig(process.env)
+const resolveUserId = createIdentityResolver(accessConfig)
+if (accessConfig) {
+  console.log(`Service tokens enabled: ${accessConfig.serviceTokens.size} mapped, issuer ${accessConfig.issuer}`)
+}
+
+function getUserId(c: { req: { header: (name: string) => string | undefined } }): Promise<string | null> {
+  return resolveUserId((name) => c.req.header(name))
 }
 
 function injectUserId<T extends Record<string, unknown>>(doc: T, userId: string): T {
@@ -28,7 +37,7 @@ function injectUserId<T extends Record<string, unknown>>(doc: T, userId: string)
 
 // POST /bujo/_bulk_docs — the main write path for PouchDB replication
 app.post('/couchdb/bujo/_bulk_docs', async (c) => {
-  const userId = getUserId(c)
+  const userId = await getUserId(c)
   if (!userId) return c.json({ error: 'unauthorized' }, 401)
 
   const body = await c.req.json()
@@ -58,7 +67,7 @@ app.put('/couchdb/bujo/:docid', async (c) => {
     return new Response(resp.body, { status: resp.status, headers: resp.headers })
   }
 
-  const userId = getUserId(c)
+  const userId = await getUserId(c)
   if (!userId) return c.json({ error: 'unauthorized' }, 401)
 
   const body = await c.req.json()
