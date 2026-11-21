@@ -2,6 +2,9 @@
 FROM node:20-alpine AS frontend
 WORKDIR /app
 COPY package.json package-lock.json ./
+# npm workspaces: their manifests must be present for npm ci to install their deps
+COPY packages/core/package.json packages/core/
+COPY packages/cli/package.json packages/cli/
 RUN npm ci --legacy-peer-deps
 COPY . .
 RUN npm run build
