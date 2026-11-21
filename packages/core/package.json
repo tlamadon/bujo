@@ -1,0 +1,11 @@
+{
+  "name": "@bujo/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Framework-agnostic Bullet Journal domain logic (works with any PouchDB-compatible db)",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts"
+}

@@ -1,0 +1,24 @@
+{
+  "name": "bujo-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bullet Journal CLI for humans and agents",
+  "type": "module",
+  "bin": {
+    "bujo": "./dist/bujo.cjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@bujo/core": "*",
+    "commander": "^14.0.0",
+    "esbuild": "^0.27.0"
+  }
+}
