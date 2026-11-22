@@ -8,10 +8,10 @@ import TagView from './TagView'
 import FutureLog from './FutureLog'
 import TaskDetail from './TaskDetail'
 import ShortcutsHelp from './ShortcutsHelp'
+import SyncIndicator from './SyncIndicator'
 import Toaster from './Toaster'
 import { DayIcon, FutureIcon, MonthIcon, TagIcon, WeekIcon } from './Icons'
-import { useSyncStatus, useTags } from './hooks'
-import type { SyncState } from './hooks'
+import { useTags } from './hooks'
 import { isoWeekKey, monthKey, type BujoEntry } from './db'
 import {
   defaultRoute,
@@ -26,53 +26,6 @@ import {
 import { TagColorsContext } from './tagColors'
 import { useToday } from './useToday'
 import './App.css'
-
-const syncLabels: Record<SyncState, string> = {
-  synced: 'Synced',
-  syncing: 'Syncing',
-  offline: 'Offline',
-  error: 'Sync error',
-  denied: 'Access denied',
-  'auth-required': 'Login required',
-}
-
-function SyncIndicator() {
-  const { state, error } = useSyncStatus()
-
-  const reAuthenticate = async () => {
-    // The service worker binds all navigations to the cached index.html, so a
-    // plain reload never reaches Cloudflare and the Access login page can't
-    // challenge the user. Unregister the SW and clear its caches so the next
-    // navigation goes over the wire. PouchDB data (IndexedDB) is untouched,
-    // and the SW re-registers on the next load via useRegisterSW().
-    try {
-      if ('serviceWorker' in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations()
-        await Promise.all(regs.map((r) => r.unregister()))
-      }
-      if ('caches' in window) {
-        const keys = await caches.keys()
-        await Promise.all(keys.map((k) => caches.delete(k)))
-      }
-    } catch {
-      // Fall through and attempt the navigation anyway.
-    }
-    // Cache-bust query param so HTTP cache can't serve a stale shell either.
-    window.location.href = `${window.location.origin}/?reauth=${Date.now()}`
-  }
-
-  return (
-    <div className={`sync-indicator sync-${state}`} title={error ?? syncLabels[state]}>
-      <span className="sync-dot" />
-      <span className="sync-label">{syncLabels[state]}</span>
-      {state === 'auth-required' && (
-        <button type="button" className="sync-reauth-btn" onClick={reAuthenticate}>
-          Log in
-        </button>
-      )}
-    </div>
-  )
-}
 
 const VIEW_META: Record<View, { label: string; icon: ReactNode }> = {
   daily: { label: 'Daily', icon: <DayIcon /> },

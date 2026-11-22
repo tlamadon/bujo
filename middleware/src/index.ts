@@ -29,6 +29,18 @@ function getUserId(c: { req: { header: (name: string) => string | undefined } })
   return resolveUserId((name) => c.req.header(name))
 }
 
+/**
+ * The answer to a write nobody can be named for. The `reason` is what the app
+ * and the CLI show the user, so it says what is missing rather than just "no".
+ */
+const NO_IDENTITY = {
+  error: 'unauthorized',
+  reason:
+    'No signed-in user on this request, so nothing can be saved. The server learns who you are from ' +
+    'Cloudflare Access (the Cf-Access-Authenticated-User-Email header, or a mapped service token): ' +
+    'open the app through its Access-protected address and log in.',
+}
+
 function injectUserId<T extends Record<string, unknown>>(doc: T, userId: string): T {
   // Skip internal PouchDB replication checkpoint docs
   if (typeof doc._id === 'string' && doc._id.startsWith('_local/')) return doc
@@ -38,7 +50,7 @@ function injectUserId<T extends Record<string, unknown>>(doc: T, userId: string)
 // POST /bujo/_bulk_docs — the main write path for PouchDB replication
 app.post('/couchdb/bujo/_bulk_docs', async (c) => {
   const userId = await getUserId(c)
-  if (!userId) return c.json({ error: 'unauthorized' }, 401)
+  if (!userId) return c.json(NO_IDENTITY, 401)
 
   const body = await c.req.json()
   if (Array.isArray(body.docs)) {
@@ -68,7 +80,7 @@ app.put('/couchdb/bujo/:docid', async (c) => {
   }
 
   const userId = await getUserId(c)
-  if (!userId) return c.json({ error: 'unauthorized' }, 401)
+  if (!userId) return c.json(NO_IDENTITY, 401)
 
   const body = await c.req.json()
   const modified = injectUserId(body, userId)

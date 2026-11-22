@@ -137,6 +137,74 @@
   white-space: nowrap;
 }
 
+/* The indicator is a button: it opens what is going on, and what to do */
+.sync-status-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.25rem;
+  padding: 0 0.6rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+}
+
+.sync-status-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* Something the user has to know about does not hide in grey */
+.sync-error .sync-status-btn,
+.sync-denied .sync-status-btn {
+  border-color: var(--danger);
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.sync-details-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sync-details-title .sync-dot {
+  width: 10px;
+  height: 10px;
+}
+
+.sync-details-summary {
+  margin: 0.5rem 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sync-details-explanation,
+.sync-details-last {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.sync-details-technical summary {
+  min-height: 2rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.sync-details-technical pre {
+  margin: 0.25rem 0 0.6rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--surface-2);
+  border-radius: 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .sync-dot {
   width: 8px;
   height: 8px;
@@ -1365,7 +1433,9 @@ kbd {
     display: none;
   }
 
-  .sync-auth-required .sync-label {
+  .sync-auth-required .sync-label,
+  .sync-error .sync-label,
+  .sync-denied .sync-label {
     display: inline;
   }
 }
@@ -1378,7 +1448,8 @@ kbd {
   }
 
   .date-jump-btn,
-  .migrate-banner button {
+  .migrate-banner button,
+  .sync-status-btn {
     min-height: var(--tap);
   }
 }
