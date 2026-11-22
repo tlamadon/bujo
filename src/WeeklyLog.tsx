@@ -1,209 +1,133 @@
-import { useState, useCallback, useMemo } from 'react'
-import {
-  addEntry,
-  isoWeekKey,
-  stripTags,
-  type BujoEntry,
-  type DisplayEntry,
-} from './db'
-import { cycleEntryStatus } from './entryActions'
-import GoalsSection from './GoalsSection'
-import { STATUS_ORDER, entryClass, entryIcon } from './statusMeta'
-import { useEntriesForDateRange } from './hooks'
+import { useMemo, useState } from 'react'
+import { addEntry, addWeeks, isoWeekKey, stripTags, weekDays, type BujoEntry, type DisplayEntry } from './db'
 import EditableEntry from './EditableEntry'
+import { formatDateCompact, formatDayShort, formatWeekRange, formatWeekday } from './format'
+import GoalsSection from './GoalsSection'
+import { useEntriesForDateRange } from './hooks'
+import { Plus } from './Icons'
+import PeriodHeader from './PeriodHeader'
+import QuickAdd from './QuickAdd'
 import { relativeWeekLabel } from './relativeLabel'
-import { toISODate, parseDate } from './dateUtils'
-
-const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-
-/** Get the Monday of the week containing `date` */
-function getMonday(date: Date): Date {
-  const d = new Date(date)
-  const day = d.getDay()
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1)
-  d.setDate(diff)
-  return d
-}
-
-function getWeekDates(monday: Date): string[] {
-  return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(monday)
-    d.setDate(monday.getDate() + i)
-    return toISODate(d)
-  })
-}
-
-function formatShortDate(iso: string): string {
-  const d = parseDate(iso)
-  return `${d.getDate()}/${d.getMonth() + 1}`
-}
+import { dayRoute, navigate, routeForDate, weekRoute } from './router'
+import { compareDisplayEntries, displayEntryKey, entryClass } from './statusMeta'
+import { useStableList } from './useStableList'
 
 interface Props {
-  onNavigateToDay: (date: string) => void
+  /** ISO week, YYYY-Www */
+  week: string
+  today: string
   onOpenDetail?: (entry: BujoEntry) => void
   onTagClick?: (tagName: string) => void
 }
 
-export default function WeeklyLog({ onNavigateToDay, onOpenDetail, onTagClick }: Props) {
-  const [weekStart, setWeekStart] = useState(() => getMonday(new Date()))
+export default function WeeklyLog({ week, today, onOpenDetail, onTagClick }: Props) {
+  const days = useMemo(() => weekDays(week), [week])
+  const rawEntries = useEntriesForDateRange(days[0], days[6])
+  const entries = useStableList(rawEntries, {
+    id: displayEntryKey,
+    compare: compareDisplayEntries,
+    resetKey: week,
+  })
 
-  const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart])
-  const rawEntries = useEntriesForDateRange(weekDates[0], weekDates[6])
-
-  // Group display entries by the date they appear on
+  // Group by the day each entry appears on (a ghost appears where it was left)
   const byDate = useMemo(() => {
     const map: Record<string, DisplayEntry[]> = {}
-    for (const d of weekDates) map[d] = []
-    if (rawEntries) {
-      for (const de of rawEntries) {
-        // For ghosts, the ghost's date field tells us which day it appears on
-        const displayDate = de.isGhost ? de.ghostDoc!.date : de.entry.date
-        if (map[displayDate]) map[displayDate].push(de)
-      }
+    for (const d of days) map[d] = []
+    for (const de of entries ?? []) {
+      map[de.isGhost ? de.ghostDoc!.date : de.entry.date]?.push(de)
     }
     return map
-  }, [rawEntries, weekDates])
+  }, [entries, days])
 
-  const shiftWeek = (dir: number) => {
-    setWeekStart((prev) => {
-      const d = new Date(prev)
-      d.setDate(d.getDate() + dir * 7)
-      return d
-    })
-  }
-
-  // Quick-add state per day
   const [addingDay, setAddingDay] = useState<string | null>(null)
-  const [newBody, setNewBody] = useState('')
 
-  const handleQuickAdd = useCallback(
-    async (date: string) => {
-      const trimmed = newBody.trim()
-      if (!trimmed) return
-      await addEntry(date, 'task', trimmed)
-      setNewBody('')
-      setAddingDay(null)
-    },
-    [newBody],
-  )
-
-  // Week label
-  const weekEnd = weekDates[6]
-  const weekLabel = `${formatShortDate(weekDates[0])} – ${formatShortDate(weekEnd)}`
+  const goTo = (target: string) => navigate(weekRoute(target, today), { replace: true })
 
   return (
     <div className="weekly-log">
-      <header className="log-header">
-        <button onClick={() => shiftWeek(-1)} aria-label="Previous week">
-          &larr;
-        </button>
-        <h2>Week: {weekLabel}</h2>
-        <button onClick={() => shiftWeek(1)} aria-label="Next week">
-          &rarr;
-        </button>
-      </header>
-      <div className="relative-label">
-        {relativeWeekLabel(weekStart)}
-        {relativeWeekLabel(weekStart) !== 'this week' && (
-          <button className="now-btn" onClick={() => setWeekStart(getMonday(new Date()))}>Now</button>
-        )}
-      </div>
-
-      <GoalsSection
-        period={isoWeekKey(weekDates[0])}
-        title="Goals this week"
-        onOpenDetail={onOpenDetail}
-        onTagClick={onTagClick}
+      <PeriodHeader
+        title={formatWeekRange(week)}
+        relative={`${relativeWeekLabel(week, today)} · ${week.slice(5)}`}
+        unit="week"
+        isCurrent={week === isoWeekKey(today)}
+        pickerValue={days[0]}
+        onPrev={() => goTo(addWeeks(week, -1))}
+        onNext={() => goTo(addWeeks(week, 1))}
+        onCurrent={() => goTo(isoWeekKey(today))}
+        onPick={(day) => goTo(isoWeekKey(day))}
       />
 
+      <GoalsSection period={week} title="Goals this week" onOpenDetail={onOpenDetail} onTagClick={onTagClick} />
+
       <div className="week-grid">
-        {weekDates.map((date, i) => {
-          const dayEntries = (byDate[date] || []).slice().sort((a, b) => {
-            const orderA = a.isGhost ? 3.5 : STATUS_ORDER[a.entry.status]
-            const orderB = b.isGhost ? 3.5 : STATUS_ORDER[b.entry.status]
-            if (orderA !== orderB) return orderA - orderB
-            return a.entry.createdAt - b.entry.createdAt
-          })
-          const isToday = date === toISODate(new Date())
+        {days.map((date) => {
+          const dayEntries = byDate[date]
+          const adding = addingDay === date
           return (
-            <div key={date} className={`week-day ${isToday ? 'today' : ''}`}>
-              <div className="week-day-header">
+            <section key={date} className={`week-day ${date === today ? 'today' : ''}`}>
+              <div className="card-header">
                 <button
+                  type="button"
                   className="week-day-label"
-                  onClick={() => onNavigateToDay(date)}
-                  title="Open daily view"
+                  onClick={() => navigate(dayRoute(date, today))}
+                  title="Open this day"
                 >
-                  <strong>{DAY_NAMES[i]}</strong>{' '}
-                  <span className="week-day-date">{formatShortDate(date)}</span>
+                  <strong>{formatWeekday(date)}</strong> <span className="week-day-date">{formatDayShort(date)}</span>
                 </button>
                 <button
-                  className="week-add-btn"
-                  onClick={() => {
-                    setAddingDay(addingDay === date ? null : date)
-                    setNewBody('')
-                  }}
-                  aria-label="Add entry"
+                  type="button"
+                  className="add-btn"
+                  onClick={() => setAddingDay(adding ? null : date)}
+                  aria-label={`Add task on ${formatWeekday(date)} ${formatDayShort(date)}`}
+                  aria-expanded={adding}
+                  title="Add task"
                 >
-                  +
+                  <span className="add-btn-box">
+                    <Plus />
+                  </span>
                 </button>
               </div>
 
-              {addingDay === date && (
-                <form
-                  className="week-quick-add"
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    handleQuickAdd(date)
-                  }}
-                >
-                  <input
-                    type="text"
-                    placeholder="New task…"
-                    value={newBody}
-                    onChange={(e) => setNewBody(e.target.value)}
-                    autoFocus
-                  />
-                  <button type="submit">Add</button>
-                </form>
+              {adding && (
+                <QuickAdd
+                  placeholder="New task…"
+                  onAdd={(body) => addEntry(date, 'task', body)}
+                  onDone={() => setAddingDay(null)}
+                />
               )}
 
-              {rawEntries === undefined ? (
-                <div className="loading">…</div>
+              {entries === undefined ? (
+                <div className="card-empty">…</div>
               ) : dayEntries.length === 0 ? (
-                <div className="week-empty">—</div>
+                <div className="card-empty">—</div>
               ) : (
-                <ul className="week-entries">
+                <ul className="entry-list compact">
                   {dayEntries.map((de) => (
                     <li
-                      key={de.isGhost ? `ghost-${de.ghostDoc?._id}` : de.entry._id}
-                      className={`week-entry ${de.isGhost ? 'status-scheduled ghost-entry' : entryClass(de.entry)}`}
+                      key={displayEntryKey(de)}
+                      className={`entry ${de.isGhost ? 'status-scheduled ghost-entry' : entryClass(de.entry)}`}
                     >
                       {de.isGhost ? (
                         <button
+                          type="button"
                           className="ghost-link"
-                          onClick={() => setWeekStart(getMonday(parseDate(de.entry.date)))}
-                          title={`Rescheduled to ${de.entry.date} — click to go there`}
+                          onClick={() => navigate(routeForDate(de.entry.date, today))}
+                          title="Rescheduled — go to where it is now"
                         >
-                          <span className="signifier ghost-signifier">&gt;</span>
-                          <span className="body ghost-body">
-                            {stripTags(de.entry.body)}
+                          <span className="ghost-signifier" aria-hidden="true">
+                            &gt;
                           </span>
-                          <span className="ghost-label">→ {de.entry.date}</span>
+                          <span className="ghost-body">{stripTags(de.entry.body) || de.entry.body}</span>
+                          <span className="ghost-label">→ {formatDateCompact(de.entry.date)}</span>
                         </button>
                       ) : (
-                        <EditableEntry
-                          entry={de.entry}
-                          statusIcon={entryIcon(de.entry)}
-                          onCycleStatus={cycleEntryStatus}
-                          onOpenDetail={onOpenDetail}
-                          onTagClick={onTagClick}
-                        />
+                        <EditableEntry entry={de.entry} onOpenDetail={onOpenDetail} onTagClick={onTagClick} />
                       )}
                     </li>
                   ))}
                 </ul>
               )}
-            </div>
+            </section>
           )
         })}
       </div>

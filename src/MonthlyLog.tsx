@@ -1,219 +1,184 @@
-import { useState, useMemo } from 'react'
-import { stripTags, type BujoEntry, type DisplayEntry } from './db'
-import { useEntriesForDateRange, useEntriesForPeriod } from './hooks'
+import { useMemo } from 'react'
+import {
+  addMonths,
+  isDayDate,
+  monthDays,
+  monthKey,
+  stripTags,
+  weekdayOf,
+  type BujoEntry,
+} from './db'
+import EditableEntry from './EditableEntry'
+import { formatDayLong, formatDayShort, formatMonth, formatWeekday } from './format'
 import GoalsSection from './GoalsSection'
-import { entryClass, entryIcon } from './statusMeta'
+import { useEntriesForDateRange, useEntriesForPeriod } from './hooks'
+import PeriodHeader from './PeriodHeader'
 import { relativeMonthLabel } from './relativeLabel'
-import { toISODate } from './dateUtils'
-import TagPills from './TagPills'
+import { dayRoute, monthRoute, navigate } from './router'
+import { compareEntries, entryClass, entryIcon } from './statusMeta'
+import { useStableList } from './useStableList'
 
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
+/** How many entries a calendar cell spells out on a wide screen */
+const MAX_SNIPPETS = 3
 
-const SHORT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+// 2024-01-01 was a Monday: seven days from there name the columns.
+const WEEKDAY_NAMES = Array.from({ length: 7 }, (_, i) => formatWeekday(`2024-01-0${i + 1}`))
 
-function pad(n: number): string {
-  return n < 10 ? `0${n}` : `${n}`
-}
+const entryId = (entry: BujoEntry) => entry._id
 
-/** Build a calendar grid (6 weeks max) for a given year/month */
-function buildCalendarGrid(year: number, month: number): (string | null)[][] {
-  const firstDay = new Date(year, month, 1)
-  let startDow = firstDay.getDay() - 1
-  if (startDow < 0) startDow = 6
+/** Still to do or to attend: what the list under the calendar is for */
+const isUpcoming = (entry: BujoEntry) =>
+  entry.status === 'task' || entry.status === 'event' || entry.status === 'scheduled'
 
-  const daysInMonth = new Date(year, month + 1, 0).getDate()
-  const weeks: (string | null)[][] = []
-  let week: (string | null)[] = new Array(startDow).fill(null)
-
-  for (let day = 1; day <= daysInMonth; day++) {
-    week.push(`${year}-${pad(month + 1)}-${pad(day)}`)
-    if (week.length === 7) {
-      weeks.push(week)
-      week = []
-    }
-  }
-  if (week.length > 0) {
-    while (week.length < 7) week.push(null)
-    weeks.push(week)
-  }
-  return weeks
-}
+/** Month-wide entries first, then by day */
+const compareByDate = (a: BujoEntry, b: BujoEntry) =>
+  Number(isDayDate(a.date)) - Number(isDayDate(b.date)) ||
+  a.date.localeCompare(b.date) ||
+  (a.time ?? '').localeCompare(b.time ?? '') ||
+  a.createdAt - b.createdAt
 
 interface Props {
-  onNavigateToDay: (date: string) => void
+  /** YYYY-MM */
+  month: string
+  today: string
   onOpenDetail?: (entry: BujoEntry) => void
   onTagClick?: (tagName: string) => void
 }
 
-export default function MonthlyLog({ onNavigateToDay, onOpenDetail, onTagClick }: Props) {
-  const now = new Date()
-  const [year, setYear] = useState(now.getFullYear())
-  const [month, setMonth] = useState(now.getMonth())
-
-  const firstDate = `${year}-${pad(month + 1)}-01`
-  const lastDay = new Date(year, month + 1, 0).getDate()
-  const lastDate = `${year}-${pad(month + 1)}-${pad(lastDay)}`
-
-  const rawEntries = useEntriesForDateRange(firstDate, lastDate)
+export default function MonthlyLog({ month, today, onOpenDetail, onTagClick }: Props) {
+  const days = useMemo(() => monthDays(month), [month])
+  const rawEntries = useEntriesForDateRange(days[0], days[days.length - 1])
   // Entries scheduled for this month as a whole (no specific day)
-  const monthEntries = useEntriesForPeriod(`${year}-${pad(month + 1)}`)
+  const monthEntries = useEntriesForPeriod(month)
 
-  // Group by display date (skip ghosts for calendar dots — only show real entries)
+  // Real entries per day (ghosts say where something used to be: not shown here)
   const byDate = useMemo(() => {
-    const map: Record<string, DisplayEntry[]> = {}
-    if (rawEntries) {
-      for (const de of rawEntries) {
-        if (de.isGhost) continue
-        const d = de.entry.date
-        if (!map[d]) map[d] = []
-        map[d].push(de)
-      }
+    const map: Record<string, BujoEntry[]> = {}
+    for (const de of rawEntries ?? []) {
+      if (!de.isGhost) (map[de.entry.date] ??= []).push(de.entry)
     }
+    for (const list of Object.values(map)) list.sort(compareEntries)
     return map
   }, [rawEntries])
 
-  const calendarGrid = useMemo(() => buildCalendarGrid(year, month), [year, month])
-
-  // Collect open tasks and events for the task list (exclude ghosts)
-  const taskList = useMemo(() => {
-    if (!rawEntries) return []
-    const listed = (entry: BujoEntry) =>
-      entry.status === 'task' || entry.status === 'event' || entry.status === 'scheduled'
-    const undated = (monthEntries ?? []).filter(listed).map((entry) => ({ entry, isGhost: false }))
-    return [...undated, ...rawEntries.filter((de) => !de.isGhost && listed(de.entry))]
+  const allEntries = useMemo(() => {
+    if (!rawEntries || !monthEntries) return undefined
+    return [
+      ...monthEntries.filter((e) => e.status !== 'goal'),
+      ...rawEntries.filter((de) => !de.isGhost).map((de) => de.entry),
+    ]
   }, [rawEntries, monthEntries])
 
-  const shiftMonth = (dir: number) => {
-    setMonth((prev) => {
-      let newMonth = prev + dir
-      let newYear = year
-      if (newMonth < 0) {
-        newMonth = 11
-        newYear--
-      } else if (newMonth > 11) {
-        newMonth = 0
-        newYear++
-      }
-      setYear(newYear)
-      return newMonth
-    })
-  }
+  const upcoming = useStableList(allEntries, {
+    id: entryId,
+    compare: compareByDate,
+    include: isUpcoming,
+    resetKey: month,
+  })
 
-  const todayStr = toISODate(new Date())
+  const goTo = (target: string) => navigate(monthRoute(target, today), { replace: true })
+  const leadingBlanks = weekdayOf(days[0]) - 1
 
   return (
     <div className="monthly-log">
-      <header className="log-header">
-        <button onClick={() => shiftMonth(-1)} aria-label="Previous month">
-          &larr;
-        </button>
-        <h2>
-          {MONTH_NAMES[month]} {year}
-        </h2>
-        <button onClick={() => shiftMonth(1)} aria-label="Next month">
-          &rarr;
-        </button>
-      </header>
-      <div className="relative-label">
-        {relativeMonthLabel(year, month)}
-        {(year !== now.getFullYear() || month !== now.getMonth()) && (
-          <button className="now-btn" onClick={() => { setYear(now.getFullYear()); setMonth(now.getMonth()) }}>Now</button>
-        )}
-      </div>
-
-      <GoalsSection
-        period={`${year}-${pad(month + 1)}`}
-        title="Goals this month"
-        onOpenDetail={onOpenDetail}
-        onTagClick={onTagClick}
+      <PeriodHeader
+        title={formatMonth(month)}
+        relative={relativeMonthLabel(month, today)}
+        unit="month"
+        isCurrent={month === monthKey(today)}
+        pickerValue={month === monthKey(today) ? today : days[0]}
+        onPrev={() => goTo(addMonths(month, -1))}
+        onNext={() => goTo(addMonths(month, 1))}
+        onCurrent={() => goTo(monthKey(today))}
+        onPick={(day) => goTo(monthKey(day))}
       />
 
-      {/* Calendar grid */}
-      <table className="month-calendar">
-        <thead>
-          <tr>
-            {SHORT_DAYS.map((d) => (
-              <th key={d}>{d}</th>
+      <div className="month-layout">
+        <div className="month-goals">
+          <GoalsSection period={month} title="Goals this month" onOpenDetail={onOpenDetail} onTagClick={onTagClick} />
+        </div>
+
+        <div className="month-calendar">
+          <div className="month-weekdays" aria-hidden="true">
+            {WEEKDAY_NAMES.map((name) => (
+              <span key={name}>{name}</span>
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {calendarGrid.map((week, wi) => (
-            <tr key={wi}>
-              {week.map((date, di) => {
-                if (!date) return <td key={di} className="month-cell empty" />
-                const dayNum = parseInt(date.slice(-2))
-                const dayEntries = byDate[date] || []
-                const isToday = date === todayStr
-                const hasOpen = dayEntries.some((de) => de.entry.status === 'task')
-                const hasCompleted = dayEntries.some((de) => de.entry.status === 'completed')
-                const hasRescheduled = dayEntries.some((de) => de.entry.status === 'scheduled' || de.entry.status === 'migrated')
-                const hasNote = dayEntries.some((de) => de.entry.status === 'note')
-                const hasEvent = dayEntries.some((de) => de.entry.status === 'event')
-                const hasDots = hasOpen || hasCompleted || hasRescheduled || hasNote || hasEvent
-                return (
-                  <td
-                    key={di}
-                    className={`month-cell ${isToday ? 'today' : ''} ${dayEntries.length > 0 ? 'has-entries' : ''}`}
-                    onClick={() => onNavigateToDay(date)}
-                    title={`${dayEntries.length} entries`}
-                  >
-                    <span className="month-day-num">{dayNum}</span>
-                    {hasDots && (
-                      <span className="month-dots">
-                        {hasOpen && <span className="dot dot-task" />}
-                        {hasCompleted && <span className="dot dot-completed" />}
-                        {hasRescheduled && <span className="dot dot-rescheduled" />}
-                        {hasNote && <span className="dot dot-note" />}
-                        {hasEvent && <span className="dot dot-event" />}
-                      </span>
-                    )}
-                  </td>
-                )
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <div className="month-legend">
-        <span className="month-legend-item"><span className="dot dot-task" /> Open</span>
-        <span className="month-legend-item"><span className="dot dot-completed" /> Done</span>
-        <span className="month-legend-item"><span className="dot dot-rescheduled" /> Rescheduled</span>
-        <span className="month-legend-item"><span className="dot dot-note" /> Note</span>
-        <span className="month-legend-item"><span className="dot dot-event" /> Event</span>
-      </div>
-
-      {/* Task list — open tasks and events this month */}
-      <div className="month-task-list">
-        <h3>Open tasks &amp; events</h3>
-        {rawEntries === undefined ? (
-          <p className="loading">Loading…</p>
-        ) : taskList.length === 0 ? (
-          <p className="empty">No open tasks or events this month.</p>
-        ) : (
-          <ul className="entry-list">
-            {taskList.map((de) => (
-              <li key={de.entry._id} className={`entry ${entryClass(de.entry)}`}>
-                <span className="signifier-static">
-                  {entryIcon(de.entry)}
-                </span>
-                <span className="month-task-date">{de.entry.date.length === 10 ? de.entry.date.slice(5) : '—'}</span>
-                <span className="body">
-                  {de.entry.priority && <span className="priority-marker" title="Priority">*</span>}
-                  {de.entry.status === 'event' && de.entry.time && (
-                    <span className="entry-time">{de.entry.time}</span>
+          </div>
+          <div className="month-grid">
+            {Array.from({ length: leadingBlanks }, (_, i) => (
+              <span key={`blank-${i}`} className="month-blank" />
+            ))}
+            {days.map((date) => {
+              const dayEntries = byDate[date] ?? []
+              const has = (...statuses: string[]) => dayEntries.some((e) => statuses.includes(e.status))
+              const count = dayEntries.length
+              return (
+                <button
+                  key={date}
+                  type="button"
+                  className={`month-cell ${date === today ? 'today' : ''} ${count > 0 ? 'has-entries' : ''}`}
+                  onClick={() => navigate(dayRoute(date, today))}
+                  aria-label={`${formatDayLong(date, today)}, ${count} ${count === 1 ? 'entry' : 'entries'}`}
+                >
+                  <span className="month-day-num">{Number(date.slice(8))}</span>
+                  {count > 0 && (
+                    <span className="month-dots">
+                      {has('task') && <span className="dot dot-task" />}
+                      {has('completed') && <span className="dot dot-completed" />}
+                      {has('scheduled', 'migrated') && <span className="dot dot-rescheduled" />}
+                      {has('note') && <span className="dot dot-note" />}
+                      {has('event') && <span className="dot dot-event" />}
+                    </span>
                   )}
-                  {stripTags(de.entry.body)}
-                  <TagPills tags={de.entry.tags} small onTagClick={onTagClick} />
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+                  {/* Wide screens have room for the entries themselves */}
+                  {count > 0 && (
+                    <span className="month-snippets">
+                      {dayEntries.slice(0, MAX_SNIPPETS).map((entry) => (
+                        <span key={entry._id} className={`month-snippet ${entryClass(entry)}`}>
+                          <span className="month-snippet-icon">{entryIcon(entry)}</span>
+                          {stripTags(entry.body) || entry.body}
+                        </span>
+                      ))}
+                      {count > MAX_SNIPPETS && (
+                        <span className="month-snippet month-snippet-more">+{count - MAX_SNIPPETS} more</span>
+                      )}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="month-legend" aria-hidden="true">
+            <span className="month-legend-item"><span className="dot dot-task" /> Open</span>
+            <span className="month-legend-item"><span className="dot dot-completed" /> Done</span>
+            <span className="month-legend-item"><span className="dot dot-rescheduled" /> Moved</span>
+            <span className="month-legend-item"><span className="dot dot-note" /> Note</span>
+            <span className="month-legend-item"><span className="dot dot-event" /> Event</span>
+          </div>
+        </div>
+
+        <section className="month-task-list">
+          <h3>Open tasks &amp; events</h3>
+          {upcoming === undefined ? (
+            <p className="loading">Loading…</p>
+          ) : upcoming.length === 0 ? (
+            <p className="empty">No open tasks or events this month.</p>
+          ) : (
+            <ul className="entry-list">
+              {upcoming.map((entry) => (
+                <li key={entry._id} className={`entry ${entryClass(entry)}`}>
+                  <EditableEntry
+                    entry={entry}
+                    meta={isDayDate(entry.date) ? formatDayShort(entry.date) : '—'}
+                    onOpenDetail={onOpenDetail}
+                    onTagClick={onTagClick}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </div>
     </div>
   )

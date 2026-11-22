@@ -1,173 +1,93 @@
-import { useState, useCallback, useMemo } from 'react'
-import {
-  addEntry,
-  stripTags,
-  migrateOpenTasks,
-  type BujoStatus,
-  type BujoEntry,
-  type DisplayEntry,
-} from './db'
-import { cycleEntryStatus } from './entryActions'
-import { NEW_ENTRY_STATUSES, STATUS_ICONS, STATUS_ORDER, entryClass, entryIcon } from './statusMeta'
-import { useEntriesForDate } from './hooks'
+import { addDays, addEntry, stripTags, type BujoEntry } from './db'
+import Composer from './Composer'
 import EditableEntry from './EditableEntry'
+import { migrateWithUndo } from './entryActions'
+import { formatDateCompact, formatDayLong } from './format'
+import { useEntriesForDate, useOverdueCount } from './hooks'
+import PeriodHeader from './PeriodHeader'
 import { relativeDayLabel } from './relativeLabel'
-import { toISODate, parseDate } from './dateUtils'
-
-function sortDisplayEntries(entries: DisplayEntry[]): DisplayEntry[] {
-  return [...entries].sort((a, b) => {
-    // Ghosts (rescheduled away) always go after completed but before notes
-    const orderA = a.isGhost ? 3.5 : STATUS_ORDER[a.entry.status]
-    const orderB = b.isGhost ? 3.5 : STATUS_ORDER[b.entry.status]
-    if (orderA !== orderB) return orderA - orderB
-    return a.entry.createdAt - b.entry.createdAt
-  })
-}
-
-function formatDailyDate(iso: string): string {
-  const d = parseDate(iso)
-  const day = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
-  if (d.getFullYear() !== new Date().getFullYear()) {
-    return `${day}, ${d.getFullYear()}`
-  }
-  return day
-}
+import { dayRoute, navigate, routeForDate } from './router'
+import { compareDisplayEntries, displayEntryKey, entryClass } from './statusMeta'
+import { showError } from './toast'
+import { useStableList } from './useStableList'
 
 interface Props {
-  initialDate?: string | null
+  date: string
+  today: string
   onOpenDetail?: (entry: BujoEntry) => void
   onTagClick?: (tagName: string) => void
 }
 
-export default function DailyLog({ initialDate, onOpenDetail, onTagClick }: Props) {
-  const [viewDate, setViewDate] = useState(() => initialDate || toISODate(new Date()))
-  const [newBody, setNewBody] = useState('')
-  const [newStatus, setNewStatus] = useState<BujoStatus>('task')
+export default function DailyLog({ date, today, onOpenDetail, onTagClick }: Props) {
+  const rawEntries = useEntriesForDate(date)
+  const entries = useStableList(rawEntries, {
+    id: displayEntryKey,
+    compare: compareDisplayEntries,
+    resetKey: date,
+  })
+  const overdue = useOverdueCount(today)
 
-  const rawEntries = useEntriesForDate(viewDate)
-  const entries = useMemo(() => rawEntries && sortDisplayEntries(rawEntries), [rawEntries])
-
-  const handleAdd = useCallback(async () => {
-    const trimmed = newBody.trim()
-    if (!trimmed) return
-    await addEntry(viewDate, newStatus, trimmed)
-    setNewBody('')
-    setNewStatus('task')
-  }, [viewDate, newBody, newStatus])
-
-
-  const handleMigrate = useCallback(async () => {
-    const today = toISODate(new Date())
-    const count = (await migrateOpenTasks(today)).length
-    if (count === 0) {
-      alert('No open tasks to migrate.')
-    } else {
-      alert(`Migrated ${count} task(s) to today.`)
-      setViewDate(today)
-    }
-  }, [])
-
-  const shiftDate = (days: number) => {
-    const d = parseDate(viewDate)
-    d.setDate(d.getDate() + days)
-    setViewDate(toISODate(d))
-  }
+  const goTo = (day: string) => navigate(dayRoute(day, today), { replace: true })
 
   return (
     <div className="daily-log">
-      {/* Header */}
-      <header className="log-header">
-        <button onClick={() => shiftDate(-1)} aria-label="Previous day">&larr;</button>
-        <h2 className="date-heading">
-          <label>
-            {formatDailyDate(viewDate)}
-            <input
-              type="date"
-              value={viewDate}
-              onChange={(e) => setViewDate(e.target.value)}
-              className="date-picker-hidden"
-            />
-          </label>
-        </h2>
-        <button onClick={() => shiftDate(1)} aria-label="Next day">&rarr;</button>
-      </header>
-      <div className="relative-label">
-        {relativeDayLabel(viewDate)}
-        {viewDate !== toISODate(new Date()) && (
-          <button className="now-btn" onClick={() => setViewDate(toISODate(new Date()))}>Now</button>
-        )}
-      </div>
+      <PeriodHeader
+        title={formatDayLong(date, today)}
+        relative={relativeDayLabel(date, today)}
+        unit="day"
+        isCurrent={date === today}
+        pickerValue={date}
+        onPrev={() => goTo(addDays(date, -1))}
+        onNext={() => goTo(addDays(date, 1))}
+        onCurrent={() => goTo(today)}
+        onPick={(day) => goTo(day)}
+      />
 
-      {/* Migration action */}
-      <button className="migrate-btn" onClick={handleMigrate}>
-        Migrate open tasks &rarr; today
-      </button>
+      {/* Migration: only where it applies, and only when there is something to move */}
+      {date === today && overdue > 0 && (
+        <div className="migrate-banner">
+          <span>
+            {overdue} open {overdue === 1 ? 'task' : 'tasks'} left on earlier days
+          </span>
+          <button type="button" onClick={() => migrateWithUndo(today).catch(showError)}>
+            Move to today
+          </button>
+        </div>
+      )}
 
-      {/* Entry list */}
       <ul className="entry-list">
         {entries === undefined ? (
           <li className="loading">Loading…</li>
         ) : entries.length === 0 ? (
-          <li className="empty">No entries for this day.</li>
+          <li className="empty">Nothing logged for this day yet.</li>
         ) : (
           entries.map((de) => (
             <li
-              key={de.isGhost ? `ghost-${de.ghostDoc?._id}` : de.entry._id}
+              key={displayEntryKey(de)}
               className={`entry ${de.isGhost ? 'status-scheduled ghost-entry' : entryClass(de.entry)}`}
             >
               {de.isGhost ? (
                 <button
+                  type="button"
                   className="ghost-link"
-                  onClick={() => setViewDate(de.entry.date)}
-                  title={`Rescheduled to ${de.entry.date} — click to go there`}
+                  onClick={() => navigate(routeForDate(de.entry.date, today))}
+                  title="Rescheduled — go to where it is now"
                 >
-                  <span className="signifier ghost-signifier">&gt;</span>
-                  <span className="body ghost-body">
-                    {stripTags(de.entry.body)}
+                  <span className="ghost-signifier" aria-hidden="true">
+                    &gt;
                   </span>
-                  <span className="ghost-label">→ {de.entry.date}</span>
+                  <span className="ghost-body">{stripTags(de.entry.body) || de.entry.body}</span>
+                  <span className="ghost-label">→ {formatDateCompact(de.entry.date)}</span>
                 </button>
               ) : (
-                <EditableEntry
-                  entry={de.entry}
-                  statusIcon={entryIcon(de.entry)}
-                  onCycleStatus={cycleEntryStatus}
-                  onOpenDetail={onOpenDetail}
-                  onTagClick={onTagClick}
-                />
+                <EditableEntry entry={de.entry} onOpenDetail={onOpenDetail} onTagClick={onTagClick} />
               )}
             </li>
           ))
         )}
       </ul>
 
-      {/* New entry form */}
-      <form
-        className="new-entry"
-        onSubmit={(e) => {
-          e.preventDefault()
-          handleAdd()
-        }}
-      >
-        <select
-          value={newStatus}
-          onChange={(e) => setNewStatus(e.target.value as BujoStatus)}
-        >
-          {NEW_ENTRY_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {STATUS_ICONS[s]} {s}
-            </option>
-          ))}
-        </select>
-        <input
-          type="text"
-          placeholder="New entry…"
-          value={newBody}
-          onChange={(e) => setNewBody(e.target.value)}
-          autoFocus
-        />
-        <button type="submit">Add</button>
-      </form>
+      <Composer placeholder="New entry…" withKind onAdd={(status, body) => addEntry(date, status, body)} />
     </div>
   )
 }

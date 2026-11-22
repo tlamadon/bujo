@@ -1,8 +1,15 @@
-import { useState, useCallback, useMemo, useEffect } from 'react'
-import { addEntry, setTagColor, stripTags, isScheduledDate, UNSCHEDULED, type BujoEntry } from './db'
-import { useTags, useEntriesForTag } from './hooks'
-import TagPills from './TagPills'
-import { entryClass, entryIcon } from './statusMeta'
+import { useContext, useState } from 'react'
+import { addEntry, setTagColor, UNSCHEDULED, type BujoEntry } from './db'
+import Composer from './Composer'
+import EditableEntry from './EditableEntry'
+import { formatDateCompact } from './format'
+import { useEntriesForTag, useTags } from './hooks'
+import { ChevronLeft } from './Icons'
+import { navigate, routeHash } from './router'
+import { entryClass } from './statusMeta'
+import { FALLBACK_TAG_COLOR, TagColorsContext, readableTextColor } from './tagColors'
+import { showError } from './toast'
+import { useStableList } from './useStableList'
 
 const COLOR_PALETTE = [
   '#7aa2d4', '#d4a27a', '#b39ddb', '#4caf50', '#e57373',
@@ -10,180 +17,143 @@ const COLOR_PALETTE = [
   '#81c784', '#ffb74d', '#64b5f6', '#ba68c8', '#ef5350',
 ]
 
+const entryId = (entry: BujoEntry) => entry._id
+const newestFirst = (a: BujoEntry, b: BujoEntry) => b.createdAt - a.createdAt
+
 interface TagDetailProps {
   tagName: string
-  tagColor: string
-  onBack: () => void
   onOpenDetail?: (entry: BujoEntry) => void
   onTagClick?: (tagName: string) => void
 }
 
-function TagDetail({ tagName, tagColor, onBack, onOpenDetail, onTagClick }: TagDetailProps) {
-  const entries = useEntriesForTag(tagName)
+function TagDetail({ tagName, onOpenDetail, onTagClick }: TagDetailProps) {
+  const color = useContext(TagColorsContext).get(tagName) ?? FALLBACK_TAG_COLOR
+  const entries = useStableList(useEntriesForTag(tagName), {
+    id: entryId,
+    compare: newestFirst,
+    resetKey: tagName,
+  })
   const [showColorPicker, setShowColorPicker] = useState(false)
-  const [currentColor, setCurrentColor] = useState(tagColor)
-  const [newBody, setNewBody] = useState('')
 
-  const handleColorChange = useCallback(async (color: string) => {
-    await setTagColor(tagName, color)
-    setCurrentColor(color)
+  const pickColor = async (next: string) => {
     setShowColorPicker(false)
-  }, [tagName])
+    try {
+      await setTagColor(tagName, next)
+    } catch (err) {
+      showError(err)
+    }
+  }
 
-  const handleAdd = useCallback(async () => {
-    const trimmed = newBody.trim()
-    if (!trimmed) return
+  const handleAdd = (body: string) => {
     // Auto-include the tag if not already present
-    const body = trimmed.match(new RegExp(`#${tagName}\\b`, 'i')) ? trimmed : `${trimmed} #${tagName}`
-    await addEntry(UNSCHEDULED, 'task', body)
-    setNewBody('')
-  }, [newBody, tagName])
-
-  const sortedEntries = useMemo(() => {
-    if (!entries) return undefined
-    return [...entries].sort((a, b) => b.createdAt - a.createdAt)
-  }, [entries])
+    const tagged = new RegExp(`#${tagName}(?![a-zA-Z0-9_-])`, 'i').test(body) ? body : `${body} #${tagName}`
+    return addEntry(UNSCHEDULED, 'task', tagged)
+  }
 
   return (
     <div className="tag-detail">
       <header className="tag-detail-header">
-        <button className="tag-back-btn" onClick={onBack}>&larr;</button>
-        <span className="tag-pill-large" style={{ background: currentColor }}>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => navigate({ view: 'tags', tag: null })}
+          aria-label="All tags"
+          title="All tags"
+        >
+          <ChevronLeft />
+        </button>
+        <h2 className="tag-pill tag-pill-large" style={{ background: color, color: readableTextColor(color) }}>
           #{tagName}
+        </h2>
+        <span className="tag-entry-count">
+          {entries === undefined ? '' : `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`}
         </span>
         <button
+          type="button"
           className="tag-color-btn"
           onClick={() => setShowColorPicker(!showColorPicker)}
-          style={{ background: currentColor }}
+          aria-label="Change color"
+          aria-expanded={showColorPicker}
           title="Change color"
-        />
+        >
+          <span style={{ background: color }} />
+        </button>
       </header>
 
       {showColorPicker && (
-        <div className="tag-color-picker">
+        <div className="tag-color-picker" role="group" aria-label="Tag color">
           {COLOR_PALETTE.map((c) => (
             <button
               key={c}
-              className={`tag-color-swatch ${c === currentColor ? 'active' : ''}`}
-              style={{ background: c }}
-              onClick={() => handleColorChange(c)}
-            />
+              type="button"
+              className={`tag-color-swatch ${c === color ? 'active' : ''}`}
+              onClick={() => pickColor(c)}
+              aria-label={`Color ${c}`}
+              aria-pressed={c === color}
+            >
+              <span style={{ background: c }} />
+            </button>
           ))}
         </div>
       )}
 
-      <div className="tag-entry-count">
-        {entries === undefined ? '…' : `${entries.length} entries`}
-      </div>
-
-      {sortedEntries === undefined ? (
+      {entries === undefined ? (
         <p className="loading">Loading…</p>
-      ) : sortedEntries.length === 0 ? (
+      ) : entries.length === 0 ? (
         <p className="empty">No entries with this tag.</p>
       ) : (
         <ul className="entry-list">
-          {sortedEntries.map((entry) => (
+          {entries.map((entry) => (
             <li key={entry._id} className={`entry ${entryClass(entry)}`}>
-              <span className="signifier-static">
-                {entryIcon(entry)}
-              </span>
-              <span className="tag-entry-date">
-                {isScheduledDate(entry.date) ? entry.date : '—'}
-              </span>
-              <span
-                className="body"
-                onClick={() => onOpenDetail?.(entry)}
-                style={{ cursor: onOpenDetail ? 'pointer' : undefined }}
-              >
-                {entry.priority && <span className="priority-marker" title="Priority">*</span>}
-                {stripTags(entry.body)}
-                <TagPills tags={entry.tags?.filter((t) => t !== tagName)} small onTagClick={onTagClick} />
-              </span>
+              <EditableEntry
+                entry={entry}
+                meta={formatDateCompact(entry.date)}
+                hideTag={tagName}
+                onOpenDetail={onOpenDetail}
+                onTagClick={onTagClick}
+              />
             </li>
           ))}
         </ul>
       )}
 
-      <form
-        className="new-entry tag-new-entry"
-        onSubmit={(e) => {
-          e.preventDefault()
-          handleAdd()
-        }}
-      >
-        <input
-          type="text"
-          placeholder={`New task in #${tagName}…`}
-          value={newBody}
-          onChange={(e) => setNewBody(e.target.value)}
-        />
-        <button type="submit">Add</button>
-      </form>
+      <Composer placeholder={`New task in #${tagName}…`} onAdd={(_status, body) => handleAdd(body)} />
     </div>
   )
 }
 
 interface Props {
+  /** The tag to show, or null for the list of all tags */
+  tag: string | null
   onOpenDetail?: (entry: BujoEntry) => void
   onTagClick?: (tagName: string) => void
-  initialTag?: string | null
-  onClearInitialTag?: () => void
 }
 
-export default function TagView({ onOpenDetail, onTagClick, initialTag, onClearInitialTag }: Props) {
+export default function TagView({ tag, onOpenDetail, onTagClick }: Props) {
   const tags = useTags()
-  const [selectedTag, setSelectedTag] = useState<string | null>(initialTag ?? null)
 
-  // Follow the tag the parent asks for. Done while rendering (not in an
-  // effect) so the selection changes in the same pass as the prop.
-  const [seenInitialTag, setSeenInitialTag] = useState(initialTag)
-  if (initialTag !== seenInitialTag) {
-    setSeenInitialTag(initialTag)
-    if (initialTag) setSelectedTag(initialTag)
-  }
-
-  useEffect(() => {
-    if (initialTag) onClearInitialTag?.()
-  }, [initialTag, onClearInitialTag])
-
-  const selectedTagDoc = useMemo(
-    () => tags?.find((t) => t.name === selectedTag),
-    [tags, selectedTag],
-  )
-
-  if (selectedTag && selectedTagDoc) {
-    return (
-      <TagDetail
-        tagName={selectedTag}
-        tagColor={selectedTagDoc.color}
-        onBack={() => setSelectedTag(null)}
-        onOpenDetail={onOpenDetail}
-        onTagClick={(name) => {
-          setSelectedTag(name)
-          onTagClick?.(name)
-        }}
-      />
-    )
+  if (tag) {
+    // Keyed by tag, so moving from one tag to another starts clean
+    return <TagDetail key={tag} tagName={tag} onOpenDetail={onOpenDetail} onTagClick={onTagClick} />
   }
 
   return (
     <div className="tag-view">
-      <h2 className="tag-view-title">Collections</h2>
+      <header className="view-header">
+        <h2>Collections</h2>
+        <p>Everything sharing a #tag, across all days.</p>
+      </header>
       {tags === undefined ? (
         <p className="loading">Loading…</p>
       ) : tags.length === 0 ? (
         <p className="empty">No tags yet. Add #tags to your entries to create collections.</p>
       ) : (
         <div className="tag-grid">
-          {tags.map((tag) => (
-            <button
-              key={tag.name}
-              className="tag-card"
-              onClick={() => setSelectedTag(tag.name)}
-            >
-              <span className="tag-card-color" style={{ background: tag.color }} />
-              <span className="tag-card-name">#{tag.name}</span>
-            </button>
+          {tags.map((t) => (
+            <a key={t.name} className="tag-card" href={routeHash({ view: 'tags', tag: t.name })}>
+              <span className="tag-card-color" style={{ background: t.color }} />
+              <span className="tag-card-name">#{t.name}</span>
+            </a>
           ))}
         </div>
       )}

@@ -1,4 +1,4 @@
-import type { BujoEntry, BujoStatus } from './db'
+import type { BujoEntry, BujoStatus, DisplayEntry } from './db'
 
 export const STATUS_ICONS: Record<BujoStatus, string> = {
   task: '•',
@@ -11,11 +11,8 @@ export const STATUS_ICONS: Record<BujoStatus, string> = {
   goal: '◇',
 }
 
-/** Statuses offered when adding an entry to a log */
-export const NEW_ENTRY_STATUSES: BujoStatus[] = ['task', 'completed', 'migrated', 'scheduled', 'note', 'event']
-
-/** Statuses a click on the signifier cycles through */
-export const STATUS_CYCLE: BujoStatus[] = ['task', 'completed', 'note', 'event']
+/** Kinds of entry offered when adding one to a log */
+export const NEW_ENTRY_STATUSES: BujoStatus[] = ['task', 'event', 'note']
 
 export const STATUS_ORDER: Record<BujoStatus, number> = {
   goal: -1,
@@ -26,6 +23,24 @@ export const STATUS_ORDER: Record<BujoStatus, number> = {
   note: 4,
   event: 5,
   dropped: 6,
+}
+
+/** Ghosts (rescheduled away) sit after completed entries, before notes */
+const GHOST_ORDER = 3.5
+
+/** Open work first, then by age */
+export function compareEntries(a: BujoEntry, b: BujoEntry): number {
+  return STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.createdAt - b.createdAt
+}
+
+export function compareDisplayEntries(a: DisplayEntry, b: DisplayEntry): number {
+  const orderA = a.isGhost ? GHOST_ORDER : STATUS_ORDER[a.entry.status]
+  const orderB = b.isGhost ? GHOST_ORDER : STATUS_ORDER[b.entry.status]
+  return orderA - orderB || a.entry.createdAt - b.entry.createdAt
+}
+
+export function displayEntryKey(de: DisplayEntry): string {
+  return de.isGhost ? `ghost-${de.ghostDoc?._id}` : de.entry._id
 }
 
 /** The signifier for an entry (an achieved goal gets a filled diamond) */

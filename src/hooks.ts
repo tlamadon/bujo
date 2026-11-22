@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import {
+  bujo,
   localDb,
   sync,
   getEntriesForDate,
@@ -13,6 +14,23 @@ import {
   type TagDoc,
   type BujoEntry,
 } from './db'
+
+// One live changes feed for the whole app. Every query hook below re-runs when
+// the local database changes; a feed each would mean a dozen listeners on the
+// database (PouchDB warns past ten) for what is a single stream of events.
+const changeListeners = new Set<() => void>()
+let changeFeed: PouchDB.Core.Changes<object> | null = null
+
+function onLocalChange(listener: () => void): () => void {
+  changeListeners.add(listener)
+  if (!changeFeed) {
+    changeFeed = localDb.changes({ since: 'now', live: true })
+    changeFeed.on('change', () => changeListeners.forEach((l) => l()))
+  }
+  return () => {
+    changeListeners.delete(listener)
+  }
+}
 
 export type SyncState = 'synced' | 'syncing' | 'offline' | 'error' | 'denied' | 'auth-required'
 
@@ -178,12 +196,11 @@ export function useEntriesForDate(date: string): DisplayEntry[] | undefined {
 
     load()
 
-    const changes = localDb.changes({ since: 'now', live: true })
-    changes.on('change', () => load())
+    const stop = onLocalChange(load)
 
     return () => {
       cancelled = true
-      changes.cancel()
+      stop()
     }
   }, [date])
 
@@ -207,12 +224,11 @@ export function useEntriesForDateRange(
 
     load()
 
-    const changes = localDb.changes({ since: 'now', live: true })
-    changes.on('change', () => load())
+    const stop = onLocalChange(load)
 
     return () => {
       cancelled = true
-      changes.cancel()
+      stop()
     }
   }, [startDate, endDate])
 
@@ -233,12 +249,11 @@ export function useTags(): TagDoc[] | undefined {
 
     load()
 
-    const changes = localDb.changes({ since: 'now', live: true })
-    changes.on('change', () => load())
+    const stop = onLocalChange(load)
 
     return () => {
       cancelled = true
-      changes.cancel()
+      stop()
     }
   }, [])
 
@@ -259,12 +274,11 @@ export function useEntriesForTag(tagName: string): BujoEntry[] | undefined {
 
     load()
 
-    const changes = localDb.changes({ since: 'now', live: true })
-    changes.on('change', () => load())
+    const stop = onLocalChange(load)
 
     return () => {
       cancelled = true
-      changes.cancel()
+      stop()
     }
   }, [tagName])
 
@@ -285,12 +299,11 @@ export function useUnscheduledEntries(): BujoEntry[] | undefined {
 
     load()
 
-    const changes = localDb.changes({ since: 'now', live: true })
-    changes.on('change', () => load())
+    const stop = onLocalChange(load)
 
     return () => {
       cancelled = true
-      changes.cancel()
+      stop()
     }
   }, [])
 
@@ -311,12 +324,11 @@ export function useEntriesForPeriod(period: string): BujoEntry[] | undefined {
 
     load()
 
-    const changes = localDb.changes({ since: 'now', live: true })
-    changes.on('change', () => load())
+    const stop = onLocalChange(load)
 
     return () => {
       cancelled = true
-      changes.cancel()
+      stop()
     }
   }, [period])
 
@@ -337,14 +349,38 @@ export function useMonthScheduledEntries(): BujoEntry[] | undefined {
 
     load()
 
-    const changes = localDb.changes({ since: 'now', live: true })
-    changes.on('change', () => load())
+    const stop = onLocalChange(load)
 
     return () => {
       cancelled = true
-      changes.cancel()
+      stop()
     }
   }, [])
 
   return entries
+}
+
+/** Reactive hook: how many open tasks sit on days (or months) before `today` */
+export function useOverdueCount(today: string): number {
+  const [count, setCount] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const load = () =>
+      bujo.getOverdueTasks(today).then((tasks) => {
+        if (!cancelled) setCount(tasks.length)
+      })
+
+    load()
+
+    const stop = onLocalChange(load)
+
+    return () => {
+      cancelled = true
+      stop()
+    }
+  }, [today])
+
+  return count
 }

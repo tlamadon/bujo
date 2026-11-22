@@ -1,19 +1,20 @@
-import { useState, useCallback } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
-  updateEntry,
-  deleteEntry,
-  rescheduleEntry,
+  addDays,
+  isScheduledDate,
   parseTags,
   refOf,
-  isScheduledDate,
+  updateEntry,
   type BujoEntry,
   type BujoStatus,
   type EntryChanges,
   type GoalState,
 } from './db'
-import { toISODate } from './dateUtils'
-import TagPills from './TagPills'
+import { deleteWithUndo, rescheduleWithUndo } from './entryActions'
+import { formatDateValue, formatTimestamp } from './format'
+import { Close } from './Icons'
 import { STATUS_ICONS } from './statusMeta'
+import TagPills from './TagPills'
 
 const SELECTABLE_STATUSES: BujoStatus[] = ['task', 'completed', 'dropped', 'note', 'event']
 
@@ -25,10 +26,16 @@ const GOAL_STATES: { value: GoalState | null; icon: string; label: string }[] = 
 
 interface Props {
   entry: BujoEntry
+  today: string
   onClose: () => void
 }
 
-export default function TaskDetail({ entry, onClose }: Props) {
+/**
+ * Everything about one entry, in a modal dialog: a sheet rising from the
+ * bottom on a phone, a panel on the right on a wide screen. A native
+ * <dialog> brings the focus trap, Escape and the inert page behind for free.
+ */
+export default function TaskDetail({ entry, today, onClose }: Props) {
   const isGoal = entry.status === 'goal'
   const [body, setBody] = useState(entry.body)
   const [status, setStatus] = useState(entry.status)
@@ -37,9 +44,35 @@ export default function TaskDetail({ entry, onClose }: Props) {
   const [time, setTime] = useState(entry.time ?? '')
   const [rescheduleDate, setRescheduleDate] = useState('')
   const [showReschedule, setShowReschedule] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const handleSave = useCallback(async () => {
-    const trimmed = body.trim()
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const bodyRef = useRef<HTMLTextAreaElement>(null)
+  const pressedBackdrop = useRef(false)
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog || dialog.open) return
+    dialog.showModal()
+    // Straight to typing on a computer; on a touch screen that would cover
+    // half the sheet with the keyboard before the user has even read it.
+    if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) bodyRef.current?.focus()
+    else dialog.focus()
+  }, [])
+
+  /** Run an action; close on success, say why on failure. */
+  const act = async (action: () => Promise<unknown>) => {
+    try {
+      await action()
+      onClose()
+    } catch (err) {
+      // Shown in the panel: a toast would sit underneath it.
+      setError(err instanceof Error && err.message ? err.message : 'Something went wrong')
+    }
+  }
+
+  const handleSave = () => {
+    const trimmed = body.replace(/\s+/g, ' ').trim()
     if (!trimmed) return
     const changes: EntryChanges = {}
     if (trimmed !== entry.body) changes.body = trimmed
@@ -48,164 +81,201 @@ export default function TaskDetail({ entry, onClose }: Props) {
     if (isGoal && goalState !== (entry.goalState ?? null)) changes.goalState = goalState
     // A time only means something on an event
     if (status === 'event' && time !== (entry.time ?? '')) changes.time = time || null
-    if (Object.keys(changes).length > 0) {
-      await updateEntry(entry, changes)
-    }
-    onClose()
-  }, [body, status, priority, goalState, time, isGoal, entry, onClose])
+    return act(async () => {
+      if (Object.keys(changes).length > 0) await updateEntry(entry, changes)
+    })
+  }
 
+  const reschedule = (date: string) => {
+    if (date) act(() => rescheduleWithUndo(entry, date))
+  }
 
-  const handleReschedule = useCallback(async () => {
-    if (!rescheduleDate) return
-    await rescheduleEntry(entry, rescheduleDate)
-    onClose()
-  }, [rescheduleDate, entry, onClose])
-
-  const handleDelete = useCallback(async () => {
-    await deleteEntry(entry)
-    onClose()
-  }, [entry, onClose])
-
-  const createdDate = new Date(entry.createdAt)
+  const scheduled = isScheduledDate(entry.date)
   const dateHistory = entry.dateHistory || []
+  const tags = parseTags(body)
+  const tomorrow = addDays(today, 1)
 
   return (
-    <div className="task-detail-overlay" onClick={onClose}>
-      <div className="task-detail" onClick={(e) => e.stopPropagation()}>
-        <header className="task-detail-header">
-          <h2>{isGoal ? 'Edit Goal' : 'Edit Entry'}</h2>
-          <button className="task-detail-close" onClick={onClose}>
-            &times;
+    <dialog
+      ref={dialogRef}
+      className="sheet"
+      aria-labelledby="task-detail-title"
+      tabIndex={-1}
+      onClose={onClose}
+      // A press that lands on the dialog element itself is on the backdrop.
+      // It must also start there: a text selection dragged out of the sheet
+      // ends on the backdrop too, and should not throw the edit away.
+      onPointerDown={(e) => {
+        pressedBackdrop.current = e.target === e.currentTarget
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && pressedBackdrop.current) onClose()
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault()
+          handleSave()
+        }
+      }}
+    >
+      <div className="sheet-content">
+        <header className="sheet-header">
+          <h2 id="task-detail-title">{isGoal ? 'Goal' : 'Entry'}</h2>
+          <button type="button" className="icon-btn icon-btn-plain" onClick={onClose} aria-label="Close" title="Close (Esc)">
+            <Close />
           </button>
         </header>
 
-        <div className="task-detail-meta">
-          <span className="task-detail-date">
-            {isGoal ? 'Period' : 'Date'}: {isScheduledDate(entry.date) ? entry.date : 'Unscheduled'}
-          </span>
-          <span className="task-detail-created">
-            Created: {createdDate.toLocaleDateString()} {createdDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </span>
-          <span className="task-detail-ref" title="Reference for the bujo CLI">
-            Ref: <code>{refOf(entry._id)}</code>
-          </span>
-        </div>
+        <label className="field">
+          <span className="field-label">Text</span>
+          <textarea
+            ref={bodyRef}
+            className="task-detail-body"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={3}
+          />
+        </label>
 
-        {dateHistory.length > 0 && (
-          <div className="task-detail-history">
-            <label>Schedule history:</label>
-            <ul className="task-detail-history-list">
-              {dateHistory.map((d, i) => (
-                <li key={i}>
-                  <span className="ghost-signifier">&gt;</span> {isScheduledDate(d) ? d : 'Unscheduled'}
-                </li>
-              ))}
-              <li className="task-detail-history-current">
-                <span className="signifier-static">•</span> {isScheduledDate(entry.date) ? entry.date : 'Unscheduled'} <em>(current)</em>
-              </li>
-            </ul>
+        {tags.length > 0 && (
+          <div className="task-detail-tags">
+            <TagPills tags={tags} />
           </div>
         )}
 
-        <div className="task-detail-status">
-          <label>Status:</label>
-          <div className="task-detail-status-options">
+        <div className="field">
+          <span className="field-label" id="task-detail-status">
+            {isGoal ? 'Outcome' : 'Kind'}
+          </span>
+          <div className="choice-group" role="group" aria-labelledby="task-detail-status">
             {isGoal
               ? GOAL_STATES.map((g) => (
                   <button
                     key={g.label}
-                    className={`task-detail-status-option ${g.value === goalState ? 'active' : ''}`}
+                    type="button"
+                    className="choice"
+                    aria-pressed={g.value === goalState}
                     onClick={() => setGoalState(g.value)}
                   >
-                    <span className="signifier-static">{g.icon}</span>
-                    {g.label}
+                    <span aria-hidden="true">{g.icon}</span> {g.label}
                   </button>
                 ))
               : SELECTABLE_STATUSES.map((s) => (
                   <button
                     key={s}
-                    className={`task-detail-status-option ${s === status ? 'active' : ''}`}
+                    type="button"
+                    className="choice"
+                    aria-pressed={s === status}
                     onClick={() => setStatus(s)}
                   >
-                    <span className="signifier-static">{STATUS_ICONS[s]}</span>
-                    {s}
+                    <span aria-hidden="true">{STATUS_ICONS[s]}</span> {s}
                   </button>
                 ))}
           </div>
         </div>
 
         <div className="task-detail-flags">
-          <label className="task-detail-priority">
+          <label className="check">
             <input type="checkbox" checked={priority} onChange={(e) => setPriority(e.target.checked)} />
-            <span className="priority-marker">*</span> Priority
+            <span>
+              <span className="priority-marker">*</span> Priority
+            </span>
           </label>
           {status === 'event' && (
             <label className="task-detail-time">
-              Time:
+              <span>Time</span>
               <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
             </label>
           )}
         </div>
 
-        <textarea
-          className="task-detail-body"
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          rows={3}
-          autoFocus
-        />
-
-        {parseTags(body).length > 0 && (
-          <div className="task-detail-tags">
-            <label>Tags:</label>
-            <TagPills tags={parseTags(body)} />
+        <div className="field">
+          <span className="field-label">{isGoal ? 'Period' : 'When'}</span>
+          <div className="task-detail-when">
+            <span>{formatDateValue(entry.date)}</span>
+            {/* Goals belong to a week or month; the day picker cannot move them */}
+            {!isGoal && (
+              <button
+                type="button"
+                className="btn"
+                aria-expanded={showReschedule}
+                onClick={() => {
+                  setShowReschedule(!showReschedule)
+                  if (!rescheduleDate) setRescheduleDate(tomorrow)
+                }}
+              >
+                {scheduled ? 'Reschedule' : 'Schedule'}
+              </button>
+            )}
           </div>
+
+          {showReschedule && (
+            <div className="task-detail-reschedule">
+              <div className="choice-group">
+                {entry.date !== today && (
+                  <button type="button" className="choice" onClick={() => reschedule(today)}>
+                    Today
+                  </button>
+                )}
+                {entry.date !== tomorrow && (
+                  <button type="button" className="choice" onClick={() => reschedule(tomorrow)}>
+                    Tomorrow
+                  </button>
+                )}
+              </div>
+              <div className="task-detail-reschedule-pick">
+                <input
+                  type="date"
+                  value={rescheduleDate}
+                  onChange={(e) => setRescheduleDate(e.target.value)}
+                  aria-label="Move to date"
+                />
+                <button type="button" className="btn btn-primary" onClick={() => reschedule(rescheduleDate)}>
+                  Move
+                </button>
+              </div>
+              <p className="hint">
+                {scheduled
+                  ? 'Leaves a ">" marker on the day it was on.'
+                  : 'Puts this entry on a day.'}
+              </p>
+            </div>
+          )}
+
+          {dateHistory.length > 0 && (
+            <ul className="task-detail-history" aria-label="Schedule history">
+              {dateHistory.map((d, i) => (
+                <li key={i}>
+                  <span aria-hidden="true">&gt;</span> {formatDateValue(d)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
         )}
 
-        <div className="task-detail-actions">
-          <button className="task-detail-save" onClick={handleSave}>
+        <div className="sheet-actions">
+          <button type="button" className="btn btn-success" onClick={handleSave} disabled={!body.trim()}>
             Save
           </button>
-          {/* Goals belong to a week or month; the day picker below cannot move them */}
-          {!isGoal && (
-            <button
-              className="task-detail-reschedule-toggle"
-              onClick={() => {
-                setShowReschedule(!showReschedule)
-                if (!rescheduleDate) {
-                  const tomorrow = new Date()
-                  tomorrow.setDate(tomorrow.getDate() + 1)
-                  setRescheduleDate(toISODate(tomorrow))
-                }
-              }}
-            >
-              {isScheduledDate(entry.date) ? 'Reschedule' : 'Schedule'}
-            </button>
-          )}
-          <button className="task-detail-delete" onClick={handleDelete}>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn-danger" onClick={() => act(() => deleteWithUndo(entry))}>
             Delete
           </button>
         </div>
 
-        {showReschedule && (
-          <div className="task-detail-reschedule">
-            <label>Move to:</label>
-            <input
-              type="date"
-              value={rescheduleDate}
-              onChange={(e) => setRescheduleDate(e.target.value)}
-            />
-            <button className="task-detail-reschedule-confirm" onClick={handleReschedule}>
-              Confirm
-            </button>
-            <p className="task-detail-reschedule-hint">
-              {isScheduledDate(entry.date)
-                ? 'This will leave a ">" marker on the current date and move the task to the selected date.'
-                : 'This will assign a date to this unscheduled task.'}
-            </p>
-          </div>
-        )}
+        <p className="task-detail-meta">
+          Created {formatTimestamp(entry.createdAt)} · Ref{' '}
+          <code title="Reference for the bujo CLI">{refOf(entry._id)}</code>
+        </p>
       </div>
-    </div>
+    </dialog>
   )
 }

@@ -1,29 +1,37 @@
-import { useTags } from './hooks'
+import { useContext } from 'react'
+import { FALLBACK_TAG_COLOR, TagColorsContext, readableTextColor } from './tagColors'
 
 interface Props {
   tags?: string[]
-  small?: boolean
   onTagClick?: (tagName: string) => void
 }
 
-export default function TagPills({ tags, small, onTagClick }: Props) {
-  const allTags = useTags()
-  if (!tags || tags.length === 0 || !allTags) return null
-
-  const tagMap = new Map(allTags.map((t) => [t.name, t.color]))
+export default function TagPills({ tags, onTagClick }: Props) {
+  const colors = useContext(TagColorsContext)
+  if (!tags || tags.length === 0) return null
 
   return (
-    <span className={`tag-pills ${small ? 'tag-pills-small' : ''}`}>
-      {tags.map((tag) => (
-        <span
-          key={tag}
-          className={`tag-pill ${onTagClick ? 'tag-pill-clickable' : ''}`}
-          style={{ background: tagMap.get(tag) || '#555' }}
-          onClick={onTagClick ? (e) => { e.stopPropagation(); onTagClick(tag) } : undefined}
-        >
-          #{tag}
-        </span>
-      ))}
+    <span className="tag-pills">
+      {tags.map((tag) => {
+        const background = colors.get(tag) ?? FALLBACK_TAG_COLOR
+        const style = { background, color: readableTextColor(background) }
+        return onTagClick ? (
+          <button
+            key={tag}
+            type="button"
+            className="tag-pill"
+            style={style}
+            onClick={() => onTagClick(tag)}
+            title={`Show everything tagged #${tag}`}
+          >
+            #{tag}
+          </button>
+        ) : (
+          <span key={tag} className="tag-pill" style={style}>
+            #{tag}
+          </span>
+        )
+      })}
     </span>
   )
 }
