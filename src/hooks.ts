@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
-  bujo,
+  getAllEntries,
+  getOverdueTasks,
   localDb,
   getEntriesForDate,
   getEntriesForDateRange,
@@ -209,7 +210,7 @@ export function useMonthScheduledEntries(): BujoEntry[] | undefined {
   return entries
 }
 
-/** Reactive hook: how many open tasks sit on days (or months) before `today` */
+/** Reactive hook: how many open tasks were left behind on earlier days, weeks and months */
 export function useOverdueCount(today: string): number {
   const [count, setCount] = useState(0)
 
@@ -217,7 +218,7 @@ export function useOverdueCount(today: string): number {
     let cancelled = false
 
     const load = () =>
-      bujo.getOverdueTasks(today).then((tasks) => {
+      getOverdueTasks(today).then((tasks) => {
         if (!cancelled) setCount(tasks.length)
       })
 
@@ -232,4 +233,28 @@ export function useOverdueCount(today: string): number {
   }, [today])
 
   return count
+}
+
+/** Reactive hook: every entry in the journal (parent/subtask links span all of it) */
+export function useAllEntries(): BujoEntry[] | undefined {
+  const [entries, setEntries] = useState<BujoEntry[] | undefined>(undefined)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const load = () =>
+      getAllEntries().then((docs) => {
+        if (!cancelled) setEntries(docs)
+      })
+
+    load()
+    const stop = onLocalChange(load)
+
+    return () => {
+      cancelled = true
+      stop()
+    }
+  }, [])
+
+  return entries
 }

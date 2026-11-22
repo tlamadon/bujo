@@ -1,7 +1,6 @@
 import { useMemo } from 'react'
 import {
   addMonths,
-  isDayDate,
   monthDays,
   monthKey,
   stripTags,
@@ -10,9 +9,9 @@ import {
 } from './db'
 import EditableEntry from './EditableEntry'
 import { formatDayLong, formatDayShort, formatMonth, formatWeekday } from './format'
-import GoalsSection from './GoalsSection'
-import { useEntriesForDateRange, useEntriesForPeriod } from './hooks'
+import { useEntriesForDateRange } from './hooks'
 import PeriodHeader from './PeriodHeader'
+import PeriodSection from './PeriodSection'
 import { relativeMonthLabel } from './relativeLabel'
 import { dayRoute, monthRoute, navigate } from './router'
 import { compareEntries, entryClass, entryIcon } from './statusMeta'
@@ -30,9 +29,7 @@ const entryId = (entry: BujoEntry) => entry._id
 const isUpcoming = (entry: BujoEntry) =>
   entry.status === 'task' || entry.status === 'event' || entry.status === 'scheduled'
 
-/** Month-wide entries first, then by day */
 const compareByDate = (a: BujoEntry, b: BujoEntry) =>
-  Number(isDayDate(a.date)) - Number(isDayDate(b.date)) ||
   a.date.localeCompare(b.date) ||
   (a.time ?? '').localeCompare(b.time ?? '') ||
   a.createdAt - b.createdAt
@@ -48,8 +45,6 @@ interface Props {
 export default function MonthlyLog({ month, today, onOpenDetail, onTagClick }: Props) {
   const days = useMemo(() => monthDays(month), [month])
   const rawEntries = useEntriesForDateRange(days[0], days[days.length - 1])
-  // Entries scheduled for this month as a whole (no specific day)
-  const monthEntries = useEntriesForPeriod(month)
 
   // Real entries per day (ghosts say where something used to be: not shown here)
   const byDate = useMemo(() => {
@@ -61,13 +56,8 @@ export default function MonthlyLog({ month, today, onOpenDetail, onTagClick }: P
     return map
   }, [rawEntries])
 
-  const allEntries = useMemo(() => {
-    if (!rawEntries || !monthEntries) return undefined
-    return [
-      ...monthEntries.filter((e) => e.status !== 'goal'),
-      ...rawEntries.filter((de) => !de.isGhost).map((de) => de.entry),
-    ]
-  }, [rawEntries, monthEntries])
+  // On a day of the month. What belongs to the month as a whole is listed in its own section.
+  const allEntries = useMemo(() => rawEntries?.filter((de) => !de.isGhost).map((de) => de.entry), [rawEntries])
 
   const upcoming = useStableList(allEntries, {
     id: entryId,
@@ -94,8 +84,14 @@ export default function MonthlyLog({ month, today, onOpenDetail, onTagClick }: P
       />
 
       <div className="month-layout">
-        <div className="month-goals">
-          <GoalsSection period={month} title="Goals this month" onOpenDetail={onOpenDetail} onTagClick={onTagClick} />
+        <div className="month-period">
+          <PeriodSection
+            period={month}
+            title={month === monthKey(today) ? 'This month' : 'For the month'}
+            addLabel="Add a task for the month"
+            onOpenDetail={onOpenDetail}
+            onTagClick={onTagClick}
+          />
         </div>
 
         <div className="month-calendar">
@@ -170,7 +166,7 @@ export default function MonthlyLog({ month, today, onOpenDetail, onTagClick }: P
                 <li key={entry._id} className={`entry ${entryClass(entry)}`}>
                   <EditableEntry
                     entry={entry}
-                    meta={isDayDate(entry.date) ? formatDayShort(entry.date) : '—'}
+                    meta={formatDayShort(entry.date)}
                     onOpenDetail={onOpenDetail}
                     onTagClick={onTagClick}
                   />

@@ -2,10 +2,10 @@ import { useMemo, useState } from 'react'
 import { addEntry, addWeeks, isoWeekKey, stripTags, weekDays, type BujoEntry, type DisplayEntry } from './db'
 import EditableEntry from './EditableEntry'
 import { formatDateCompact, formatDayShort, formatWeekRange, formatWeekday } from './format'
-import GoalsSection from './GoalsSection'
 import { useEntriesForDateRange } from './hooks'
 import { Plus } from './Icons'
 import PeriodHeader from './PeriodHeader'
+import PeriodSection from './PeriodSection'
 import QuickAdd from './QuickAdd'
 import { relativeWeekLabel } from './relativeLabel'
 import { dayRoute, navigate, routeForDate, weekRoute } from './router'
@@ -57,7 +57,13 @@ export default function WeeklyLog({ week, today, onOpenDetail, onTagClick }: Pro
         onPick={(day) => goTo(isoWeekKey(day))}
       />
 
-      <GoalsSection period={week} title="Goals this week" onOpenDetail={onOpenDetail} onTagClick={onTagClick} />
+      <PeriodSection
+        period={week}
+        title={week === isoWeekKey(today) ? 'This week' : 'For the week'}
+        addLabel="Add a task for the week"
+        onOpenDetail={onOpenDetail}
+        onTagClick={onTagClick}
+      />
 
       <div className="week-grid">
         {days.map((date) => {

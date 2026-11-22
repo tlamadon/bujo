@@ -52,7 +52,7 @@ describe('migrate', () => {
     expect(await bujo.getOverdueTasks(TODAY)).toEqual([])
   })
 
-  it('migrates future-log tasks only once their month is over', async () => {
+  it('carries a month task into the current month, once its month is over', async () => {
     const { db, bujo } = newBujo()
     await bujo.addEntry('2026-10', 'task', 'sometime in October')
     await bujo.addEntry('2026-11', 'task', 'sometime in November')
@@ -63,23 +63,45 @@ describe('migrate', () => {
 
     await bujo.migrateOpenTasks(TODAY)
     const entries = await byBody(db)
-    expect(entries['sometime in October']).toMatchObject({ date: TODAY, dateHistory: ['2026-10'] })
+    // It stays a month task: "some time in October" becomes "some time in November"
+    expect(entries['sometime in October']).toMatchObject({ date: '2026-11', dateHistory: ['2026-10'] })
     expect(entries['sometime in November'].date).toBe('2026-11')
     expect(entries['sometime in December'].date).toBe('2026-12')
     // Leaving a month is not leaving a day: no ghost
     expect((await dump(db)).ghosts).toHaveLength(0)
   })
 
-  it('never migrates goals, however old', async () => {
+  it('carries a week task into the current week, once its week is over', async () => {
     const { db, bujo } = newBujo()
-    await bujo.addGoal('2026-W40', 'Old weekly goal')
-    await bujo.addGoal('2026-09', 'Old monthly goal')
-    await bujo.addGoal('2025-W50', 'Last year')
+    // TODAY is in 2026-W47
+    await bujo.addEntry('2026-W40', 'task', 'old week')
+    await bujo.addEntry('2025-W50', 'task', 'last year')
+    await bujo.addEntry('2026-W47', 'task', 'this week')
+    await bujo.addEntry('2026-W48', 'task', 'next week')
+    const done = await bujo.addEntry('2026-W40', 'task', 'old week, done')
+    await bujo.completeEntry(done)
 
-    expect(await bujo.migrateOpenTasks(TODAY)).toEqual([])
+    const moved = await bujo.migrateOpenTasks(TODAY)
+    expect(moved.map((e) => e.body)).toEqual(['last year', 'old week'])
+
     const entries = await byBody(db)
-    expect(entries['Old weekly goal'].date).toBe('2026-W40')
-    expect(entries['Old monthly goal'].date).toBe('2026-09')
+    expect(entries['old week']).toMatchObject({ date: '2026-W47', dateHistory: ['2026-W40'] })
+    expect(entries['last year'].date).toBe('2026-W47')
+    expect(entries['this week'].date).toBe('2026-W47')
+    expect(entries['next week'].date).toBe('2026-W48')
+    expect(entries['old week, done'].date).toBe('2026-W40')
+    expect((await dump(db)).ghosts).toHaveLength(0)
+  })
+
+  it('across a year boundary, goes by the ISO week', async () => {
+    const { db, bujo } = newBujo()
+    // 2027-01-02 is a Saturday in ISO week 2026-W53
+    await bujo.addEntry('2026-W53', 'task', 'still this week')
+    await bujo.addEntry('2026-W52', 'task', 'the week before')
+    await bujo.migrateOpenTasks('2027-01-02')
+    const entries = await byBody(db)
+    expect(entries['still this week'].date).toBe('2026-W53')
+    expect(entries['the week before'].date).toBe('2026-W53')
   })
 
   it('lists overdue tasks oldest first', async () => {

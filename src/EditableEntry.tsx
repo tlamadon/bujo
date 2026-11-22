@@ -1,7 +1,8 @@
-import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useContext, useLayoutEffect, useRef, useState } from 'react'
 import { isClosed, stripTags, updateEntry, type BujoEntry } from './db'
 import { toggleEntryDone } from './entryActions'
-import { More } from './Icons'
+import { FamiliesContext } from './families'
+import { Bolt, More } from './Icons'
 import { entryIcon } from './statusMeta'
 import TagPills from './TagPills'
 import { showError } from './toast'
@@ -18,7 +19,8 @@ interface Props {
 
 /**
  * The contents of one entry row: signifier (tap: done / not done), text (tap:
- * edit in place), tags, and a button for everything else.
+ * edit in place), tags, and a button for everything else. An epic shows how
+ * many of its subtasks are done; a subtask names its epic.
  */
 export default function EditableEntry({ entry, meta, hideTag, onOpenDetail, onTagClick }: Props) {
   const [editing, setEditing] = useState(false)
@@ -29,6 +31,10 @@ export default function EditableEntry({ entry, meta, hideTag, onOpenDetail, onTa
 
   const text = stripTags(entry.body) || entry.body
   const closed = isClosed(entry)
+  const families = useContext(FamiliesContext)
+  const progress = families.progressOf(entry)
+  const parent = families.parentOf(entry)
+  const parentText = parent ? stripTags(parent.body) || parent.body : ''
 
   const startEditing = useCallback(() => {
     done.current = false
@@ -127,6 +133,23 @@ export default function EditableEntry({ entry, meta, hideTag, onOpenDetail, onTa
             {entry.status === 'event' && entry.time && <span className="entry-time">{entry.time}</span>}
             {text}
           </span>
+          {progress && (
+            <span className="epic-badge" title={`Epic: ${progress.done} of ${progress.total} subtasks done`}>
+              <Bolt />
+              {progress.total > 0 && `${progress.done}/${progress.total}`}
+            </span>
+          )}
+          {parent && (
+            <button
+              type="button"
+              className="parent-chip"
+              onClick={() => onOpenDetail?.(parent)}
+              title={`Part of: ${parentText}`}
+            >
+              <Bolt />
+              <span>{parentText}</span>
+            </button>
+          )}
           <TagPills tags={hideTag ? entry.tags?.filter((t) => t !== hideTag) : entry.tags} onTagClick={onTagClick} />
         </span>
       )}

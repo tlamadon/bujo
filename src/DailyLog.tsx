@@ -47,10 +47,10 @@ export default function DailyLog({ date, today, onOpenDetail, onTagClick }: Prop
       {date === today && overdue > 0 && (
         <div className="migrate-banner">
           <span>
-            {overdue} open {overdue === 1 ? 'task' : 'tasks'} left on earlier days
+            {overdue} open {overdue === 1 ? 'task' : 'tasks'} left behind
           </span>
-          <button type="button" onClick={() => migrateWithUndo(today).catch(showError)}>
-            Move to today
+          <button type="button" onClick={() => migrateWithUndo(today).catch(showError)} title="From earlier days to today; from earlier weeks and months to the current one">
+            Carry forward
           </button>
         </div>
       )}

@@ -22,7 +22,8 @@ describe('capture', () => {
       priority: false,
       open: true,
       time: null,
-      goalState: null,
+      parent: null,
+      subtasks: null,
       dateHistory: [],
       moves: 0,
       createdAt: expect.stringMatching(/^2026-11-21T18:\d\d:\d\d\.000Z$/),
@@ -63,7 +64,9 @@ describe('capture', () => {
     for (const args of [
       ['add', 'x', '--date', 'soonish'],
       ['add', 'x', '--date', '2026-02-30'],
-      ['add', 'x', '--date', '2026-W48'],
+      ['add', 'x', '--date', '2026-W54'],
+      ['add', 'x', '--week', '--month'],
+      ['add', 'x', '--date', 'tomorrow', '--week'],
       ['add', 'x', '--time', '25:00'],
       ['add', 'x', '--note', '--event'],
       ['add', '   '],
@@ -77,16 +80,24 @@ describe('capture', () => {
     expect((await ok('today')).entries).toEqual([])
   })
 
-  it('adds goals for the current week by default, or a given week or month', async () => {
+  it('adds a task for a week or a month as a whole', async () => {
     const { ok } = makeCli()
-    expect((await ok('goal', 'Ship the CLI')).entry).toMatchObject({
-      status: 'goal', date: '2026-W47', dateKind: 'week', goalState: 'open', open: true,
+    expect((await ok('add', 'Ship the CLI', '--week')).entry).toMatchObject({
+      status: 'task', date: '2026-W47', dateKind: 'week', open: true,
     })
-    expect((await ok('goal', 'Next week', '--week', 'next')).entry.date).toBe('2026-W48')
+    expect((await ok('add', 'Next week', '--week', 'next')).entry.date).toBe('2026-W48')
+    expect((await ok('add', 'Explicit', '--date', '2026-W50')).entry.date).toBe('2026-W50')
+    expect((await ok('add', 'This week', '--date', 'this-week')).entry.date).toBe('2026-W47')
+    expect((await ok('add', 'Run 60 km', '--month')).entry).toMatchObject({ date: '2026-11', dateKind: 'month' })
+    expect((await ok('add', 'In two months', '--month', '+2')).entry.date).toBe('2027-01')
+    expect((await ok('add', 'A note for the week', '--week', '--note')).entry).toMatchObject({ status: 'note', date: '2026-W47' })
+  })
+
+  it('keeps `goal` as a short way to add a task for the week or a month', async () => {
+    const { ok } = makeCli()
+    expect((await ok('goal', 'Ship the CLI')).entry).toMatchObject({ status: 'task', date: '2026-W47', dateKind: 'week' })
     expect((await ok('goal', 'Explicit', '--week', '2026-W50')).entry.date).toBe('2026-W50')
-    expect((await ok('goal', 'Run 60 km', '--month')).entry).toMatchObject({ date: '2026-11', dateKind: 'month' })
     expect((await ok('goal', 'December', '--month', '2026-12')).entry.date).toBe('2026-12')
-    expect((await ok('goal', 'In two months', '--month', '+2')).entry.date).toBe('2027-01')
   })
 
   it('refuses a goal for both a week and a month', async () => {
@@ -261,27 +272,26 @@ describe('changing entries', () => {
     expect(day.stderr).toContain('use `bujo move')
   })
 
-  it('moves goals between periods only', async () => {
-    const { cli, ok } = makeCli()
-    const goal = (await ok('goal', 'Ship it')).entry
-    expect((await ok('move', goal.ref, '2026-W48')).entry).toMatchObject({ date: '2026-W48', ref: goal.ref })
-    expect((await ok('move', goal.ref, '2026-12')).entry.date).toBe('2026-12')
-    // A day stands for the week it is in
-    expect((await ok('move', goal.ref, '2026-12-09')).entry.date).toBe('2026-W50')
-    expect((await ok('move', goal.ref, 'next-week')).entry.date).toBe('2026-W48')
-    expect((await ok('schedule', goal.ref, 'next-month')).entry.date).toBe('2026-12')
-    expect((await cli('move', goal.ref, 'unscheduled')).code).toBe(1)
-
-    const task = (await ok('add', 'A task')).entry
-    expect((await cli('move', task.ref, '2026-W48')).code).toBe(1)
+  it('moves a task between a week, a month, a day and nowhere', async () => {
+    const { ok } = makeCli()
+    const task = (await ok('add', 'Ship it', '--week')).entry
+    expect((await ok('move', task.ref, '2026-W48')).entry).toMatchObject({ date: '2026-W48', ref: task.ref })
+    expect((await ok('move', task.ref, '2026-12')).entry.date).toBe('2026-12')
+    expect((await ok('move', task.ref, '2026-12-09')).entry).toMatchObject({ date: '2026-12-09', dateKind: 'day' })
+    expect((await ok('move', task.ref, 'this-week')).entry.date).toBe('2026-W47')
+    expect((await ok('schedule', task.ref, 'next-month')).entry.date).toBe('2026-12')
+    expect((await ok('move', task.ref, 'unscheduled')).entry.date).toBe('unscheduled')
+    expect((await ok('show', task.ref)).entry.dateHistory).toEqual([
+      '2026-W47', '2026-W48', '2026-12', '2026-12-09', '2026-W47', '2026-12',
+    ])
   })
 
-  it('tracks goal progress with done, drop and undo', async () => {
+  it('completes, drops and reopens a week task like any other', async () => {
     const { ok } = makeCli()
-    const goal = (await ok('goal', 'Ship it')).entry
-    expect((await ok('done', goal.ref)).entries[0]).toMatchObject({ status: 'goal', goalState: 'achieved', open: false })
-    expect((await ok('drop', goal.ref)).entries[0]).toMatchObject({ goalState: 'dropped' })
-    expect((await ok('undo', goal.ref)).entries[0]).toMatchObject({ goalState: 'open', open: true })
+    const task = (await ok('add', 'Ship it', '--week')).entry
+    expect((await ok('done', task.ref)).entries[0]).toMatchObject({ status: 'completed', open: false })
+    expect((await ok('drop', task.ref)).entries[0]).toMatchObject({ status: 'dropped' })
+    expect((await ok('undo', task.ref)).entries[0]).toMatchObject({ status: 'task', open: true })
   })
 
   it('edits text and re-reads the tags', async () => {
@@ -469,11 +479,106 @@ describe('migrate and stale', () => {
   })
 })
 
+describe('carrying week and month tasks forward', () => {
+  it('moves each to the current week or month, not onto a day', async () => {
+    const { ok, cli } = makeCli()
+    await ok('add', 'Left on a day', '--date', '2026-11-18')
+    await ok('add', 'Left in a week', '--date', '2026-W45')
+    await ok('add', 'Left in a month', '--date', '2026-10')
+    await ok('add', 'This week, not overdue', '--week')
+
+    const preview = await cli('migrate', '--dry-run', '--no-color')
+    expect(preview.stdout).toContain('2026-11-18 → 2026-11-21')
+    expect(preview.stdout).toContain('2026-W45 → 2026-W47')
+    expect(preview.stdout).toContain('2026-10 → 2026-11')
+    expect(preview.stdout).not.toContain('not overdue')
+
+    const result = await ok('migrate')
+    expect(result.count).toBe(3)
+    const where = Object.fromEntries(result.entries.map((e: { body: string; date: string }) => [e.body, e.date]))
+    expect(where).toEqual({
+      'Left on a day': '2026-11-21',
+      'Left in a week': '2026-W47',
+      'Left in a month': '2026-11',
+    })
+    expect((await ok('today')).overdue).toEqual([])
+  })
+})
+
+describe('subtasks and epics', () => {
+  async function seeded() {
+    const ctx = makeCli()
+    const epic = (await ctx.ok('add', 'Ship v2 #release', '--week')).entry
+    const first = (await ctx.ok('add', 'Write the changelog', '--parent', epic.ref)).entry
+    const second = (await ctx.ok('add', 'Tag the release', '--date', '2026-11-23', '--parent', 'Ship v2')).entry
+    return { ...ctx, epic, first, second }
+  }
+
+  it('adds a subtask, which names its parent', async () => {
+    const { first, epic } = await seeded()
+    expect(first).toMatchObject({ date: TODAY, parent: { ref: epic.ref, text: 'Ship v2' }, subtasks: null })
+  })
+
+  it('shows an epic with its progress wherever it is listed', async () => {
+    const { ok, cli, first } = await seeded()
+    expect((await ok('week')).undated[0]).toMatchObject({ body: 'Ship v2 #release', parent: null, subtasks: { done: 0, total: 2 } })
+
+    await ok('done', first.ref)
+    expect((await ok('week')).undated[0].subtasks).toEqual({ done: 1, total: 2 })
+    // Finishing the subtasks does not finish the epic, nor the other way round
+    expect((await ok('week')).undated[0].open).toBe(true)
+
+    const text = (await cli('week', '--no-color')).stdout
+    expect(text).toContain('Ship v2 #release  ⚡1/2')
+    expect(text).toContain('Write the changelog  ‹ Ship v2')
+  })
+
+  it('lists the subtasks in `show`', async () => {
+    const { ok, cli, epic } = await seeded()
+    const detail = await ok('show', epic.ref)
+    expect(detail.subtasks.map((e: { body: string }) => e.body)).toEqual(['Write the changelog', 'Tag the release'])
+    expect(detail.entry.subtasks).toEqual({ done: 0, total: 2 })
+
+    const text = (await cli('show', epic.ref, '--no-color')).stdout
+    expect(text).toContain('subtasks  0 of 2 done')
+    expect(text).toContain('Tag the release')
+  })
+
+  it('attaches and detaches an existing entry', async () => {
+    const { ok, epic } = await seeded()
+    const loose = (await ok('add', 'Announce it')).entry
+    expect((await ok('parent', loose.ref, epic.ref)).entries[0].parent).toMatchObject({ ref: epic.ref })
+    expect((await ok('show', epic.ref)).subtasks).toHaveLength(3)
+
+    expect((await ok('parent', loose.ref, 'none')).entries[0].parent).toBeNull()
+    expect((await ok('show', epic.ref)).subtasks).toHaveLength(2)
+  })
+
+  it('goes one level deep, and only under a task', async () => {
+    const { ok, cli, epic, first } = await seeded()
+    const deeper = await cli('add', 'Too deep', '--parent', first.ref)
+    expect(deeper.code).toBe(1)
+    expect(deeper.stderr).toContain('subtasks of its own')
+
+    const loose = (await ok('add', 'Loose')).entry
+    expect((await cli('parent', epic.ref, loose.ref)).code).toBe(1)
+    const note = (await ok('add', 'Just a note', '--note')).entry
+    expect((await cli('parent', loose.ref, note.ref)).stderr).toContain('Only a task')
+    expect((await cli('add', 'x', '--parent', 'nosuchref')).code).toBe(2)
+  })
+
+  it('keeps the subtasks when the epic is deleted', async () => {
+    const { ok, epic, first } = await seeded()
+    await ok('rm', epic.ref, '--yes')
+    expect((await ok('show', first.ref)).entry).toMatchObject({ body: 'Write the changelog', parent: null })
+  })
+})
+
 describe('weekly, monthly and future logs', () => {
   async function seeded() {
     const ctx = makeCli()
-    await ctx.ok('goal', 'Ship the CLI')
-    await ctx.ok('goal', 'Run 60 km', '--month')
+    await ctx.ok('add', 'Ship the CLI', '--week')
+    await ctx.ok('add', 'Run 60 km', '--month')
     await ctx.ok('add', 'Monday task', '--date', '2026-11-16')
     await ctx.ok('add', 'Today task')
     await ctx.ok('add', 'Dentist', '--date', '2026-11-27', '--time', '14:30')
@@ -484,11 +589,11 @@ describe('weekly, monthly and future logs', () => {
     return ctx
   }
 
-  it('shows the week: goals, then Monday to Sunday', async () => {
+  it('shows the week: what has no day yet, then Monday to Sunday', async () => {
     const { ok } = await seeded()
     const week = await ok('week')
     expect(week).toMatchObject({ week: '2026-W47', start: '2026-11-16', end: '2026-11-22', current: true })
-    expect(week.goals.map((g: { body: string }) => g.body)).toEqual(['Ship the CLI'])
+    expect(week.undated.map((e: { body: string }) => e.body)).toEqual(['Ship the CLI'])
     expect(week.days.map((d: { date: string }) => d.date)).toEqual([
       '2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21', '2026-11-22',
     ])
@@ -506,12 +611,11 @@ describe('weekly, monthly and future logs', () => {
     expect((await ok('week', '2026-12-03')).week).toBe('2026-W49')
   })
 
-  it('shows the month: goals, undated items, a calendar summary and open tasks', async () => {
+  it('shows the month: what has no day yet, a calendar summary and open tasks', async () => {
     const { ok } = await seeded()
     const month = await ok('month')
     expect(month).toMatchObject({ month: '2026-11', start: '2026-11-01', end: '2026-11-30', current: true })
-    expect(month.goals.map((g: { body: string }) => g.body)).toEqual(['Run 60 km'])
-    expect(month.undated.map((e: { body: string }) => e.body)).toEqual(['Sometime in November'])
+    expect(month.undated.map((e: { body: string }) => e.body)).toEqual(['Run 60 km', 'Sometime in November'])
     expect(month.days).toHaveLength(30)
     expect(month.days[15]).toEqual({
       date: '2026-11-16',
@@ -539,7 +643,7 @@ describe('weekly, monthly and future logs', () => {
     const future = await ok('future')
     expect(future.unscheduled.map((e: { body: string }) => e.body)).toEqual(['Someday'])
     expect(future.months.map((m: { month: string; entries: { body: string }[] }) => [m.month, m.entries.map((e) => e.body)])).toEqual([
-      ['2026-11', ['Sometime in November', 'Dentist']],
+      ['2026-11', ['Run 60 km', 'Sometime in November', 'Dentist']],
       ['2026-12', ['December task']],
       ['2027-02', ['Sometime in February']],
     ])
@@ -616,10 +720,10 @@ describe('review', () => {
   async function seeded() {
     const ctx = makeCli()
     const { ok } = ctx
-    await ok('goal', 'Ship the CLI')
-    await ok('goal', 'Inbox zero')
+    await ok('add', 'Ship the CLI', '--week')
+    await ok('add', 'Inbox zero', '--week')
     await ok('done', 'Ship the CLI')
-    await ok('goal', 'Run 60 km', '--month')
+    await ok('add', 'Run 60 km', '--month')
     await ok('add', 'Finished early', '--date', '2026-11-16')
     await ok('done', 'Finished early')
     await ok('add', 'Still open', '--date', '2026-11-18')
@@ -637,23 +741,19 @@ describe('review', () => {
     return ctx
   }
 
-  it('bundles a week: counts, goals, done, open, dropped, migrated, stale', async () => {
+  it('bundles a week: counts, done, open, dropped, migrated, stale', async () => {
     const { ok } = await seeded()
     const review = await ok('review', 'week')
     expect(review).toMatchObject({
       command: 'review', kind: 'week', period: '2026-W47', start: '2026-11-16', end: '2026-11-22', current: true,
-      counts: {
-        completed: 1, open: 2, dropped: 1, migrated: 1, events: 1, notes: 1,
-        goals: { open: 1, achieved: 1, dropped: 0 },
-      },
+      // The week's own tasks count along with those on its days
+      counts: { completed: 2, open: 3, dropped: 1, migrated: 1, events: 1, notes: 1 },
       staleMinMoves: 3,
     })
     const bodies = (list: { body: string }[]) => list.map((e) => e.body)
-    expect(bodies(review.goals)).toEqual(['Inbox zero', 'Ship the CLI'])
-    expect(review.goals.map((g: { goalState: string }) => g.goalState)).toEqual(['open', 'achieved'])
-    expect(review.monthGoals).toMatchObject([{ month: '2026-11', goals: [{ body: 'Run 60 km' }] }])
-    expect(bodies(review.completed)).toEqual(['Finished early'])
-    expect(bodies(review.open)).toEqual(['Still open', 'Moved within the week'])
+    expect(review.monthTasks).toMatchObject([{ month: '2026-11', entries: [{ body: 'Run 60 km' }] }])
+    expect(bodies(review.completed)).toEqual(['Ship the CLI', 'Finished early'])
+    expect(bodies(review.open)).toEqual(['Inbox zero', 'Still open', 'Moved within the week'])
     expect(bodies(review.dropped)).toEqual(['Gave up'])
     expect(review.migrated).toMatchObject([{ body: 'Carried over', ghostDate: '2026-11-20', date: '2026-11-25' }])
     expect(bodies(review.stale)).toEqual(['Keeps slipping'])
@@ -667,10 +767,12 @@ describe('review', () => {
     const month = await ok('review', 'month', '--dry-run')
     expect(month).toMatchObject({
       kind: 'month', period: '2026-11', start: '2026-11-01', end: '2026-11-30',
-      counts: { completed: 1, dropped: 1, migrated: 0, goals: { open: 1, achieved: 0, dropped: 0 } },
-      monthGoals: [],
+      // Weeks starting in the month are part of it
+      counts: { completed: 2, dropped: 1, migrated: 0 },
+      monthTasks: [],
     })
-    expect(month.goals.map((g: { body: string }) => g.body)).toEqual(['Run 60 km'])
+    expect(month.open.map((e: { body: string }) => e.body)).toContain('Run 60 km')
+    expect(month.completed.map((e: { body: string }) => e.body)).toEqual(['Ship the CLI', 'Finished early'])
     expect((await ok('review', 'month', '2026-10')).counts.completed).toBe(0)
     expect((await ok('review', 'week', '--min-moves', '5')).stale).toEqual([])
 

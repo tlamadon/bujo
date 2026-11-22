@@ -1,48 +1,51 @@
 import { describe, expect, it } from 'vitest'
-import { InvalidError, UNSCHEDULED, isClosed, isOpen, type BujoEntry, type GhostEntry } from '../src'
+import {
+  InvalidError,
+  UNSCHEDULED,
+  familyIndex,
+  idTail,
+  isClosed,
+  isOpen,
+  type BujoEntry,
+  type GhostEntry,
+} from '../src'
 import { dump, newBujo } from './helpers'
 
-describe('goals and period keys', () => {
-  it('stores a goal under its week or month key', async () => {
+describe('week- and month-dated entries', () => {
+  it('stores an entry under its week or month key', async () => {
     const { bujo } = newBujo()
-    const weekly = await bujo.addGoal('2026-W47', 'Ship the CLI #bujo')
-    const monthly = await bujo.addGoal('2026-11', 'Run 60 km')
+    const weekly = await bujo.addEntry('2026-W47', 'task', 'Ship the CLI #bujo')
+    const monthly = await bujo.addEntry('2026-11', 'task', 'Run 60 km')
 
-    expect(weekly).toMatchObject({ status: 'goal', date: '2026-W47', tags: ['bujo'] })
+    expect(weekly).toMatchObject({ status: 'task', date: '2026-W47', tags: ['bujo'] })
     expect(weekly._id.startsWith('2026-W47:')).toBe(true)
     expect(monthly._id.startsWith('2026-11:')).toBe(true)
-    expect(weekly.goalState).toBeUndefined()
     expect(isOpen(weekly)).toBe(true)
   })
 
-  it('returns the goals of one period with a prefix query', async () => {
+  it('returns the entries of one period with a prefix query', async () => {
     const { bujo } = newBujo()
-    await bujo.addGoal('2026-W46', 'last week')
-    await bujo.addGoal('2026-W47', 'this week A')
-    await bujo.addGoal('2026-W47', 'this week B')
-    await bujo.addGoal('2026-W48', 'next week')
-    await bujo.addGoal('2026-11', 'this month')
-    await bujo.addGoal('2026-12', 'next month')
-    await bujo.addEntry('2026-11', 'task', 'future log item, not a goal')
+    await bujo.addEntry('2026-W46', 'task', 'last week')
+    await bujo.addEntry('2026-W47', 'task', 'this week A')
+    await bujo.addEntry('2026-W47', 'note', 'this week B')
+    await bujo.addEntry('2026-W48', 'task', 'next week')
+    await bujo.addEntry('2026-11', 'task', 'this month')
+    await bujo.addEntry('2026-12', 'task', 'next month')
     await bujo.addEntry('2026-11-21', 'task', 'a day in that week and month')
 
-    expect((await bujo.getGoals('2026-W47')).map((g) => g.body)).toEqual(['this week A', 'this week B'])
-    expect((await bujo.getGoals('2026-11')).map((g) => g.body)).toEqual(['this month'])
-    expect(await bujo.getGoals('2026-W49')).toEqual([])
-    expect((await bujo.getEntriesForPeriod('2026-11')).map((e) => e.body)).toEqual([
-      'this month',
-      'future log item, not a goal',
-    ])
+    expect((await bujo.getEntriesForPeriod('2026-W47')).map((e) => e.body)).toEqual(['this week A', 'this week B'])
+    expect((await bujo.getEntriesForPeriod('2026-11')).map((e) => e.body)).toEqual(['this month'])
+    expect(await bujo.getEntriesForPeriod('2026-W49')).toEqual([])
   })
 
   it('sorts period keys next to the days they cover', async () => {
     const { db, bujo } = newBujo()
-    for (const [date, status] of [
-      ['2026-W47', 'goal'], ['2026-11', 'goal'], ['2026-12', 'goal'], ['2026-W01', 'goal'], ['2027-W01', 'goal'],
-      ['2026-11-01', 'task'], ['2026-11-30', 'task'], ['2026-12-01', 'task'], ['2027-01-01', 'task'],
-      [UNSCHEDULED, 'task'],
-    ] as const) {
-      await bujo.addEntry(date, status, `${status} ${date}`)
+    for (const date of [
+      '2026-W47', '2026-11', '2026-12', '2026-W01', '2027-W01',
+      '2026-11-01', '2026-11-30', '2026-12-01', '2027-01-01',
+      UNSCHEDULED,
+    ]) {
+      await bujo.addEntry(date, 'task', `task ${date}`)
     }
     // Within a year: each month's days, then that month; then the year's weeks.
     expect((await dump(db)).entries.map((e) => (e as BujoEntry).date)).toEqual([
@@ -54,12 +57,11 @@ describe('goals and period keys', () => {
     ])
   })
 
-  it('keeps goals and future-log items out of day ranges', async () => {
+  it('keeps week- and month-dated entries out of day ranges', async () => {
     const { bujo } = newBujo()
-    await bujo.addGoal('2026-11', 'November goal')
-    await bujo.addGoal('2026-W49', 'Week 49 goal')
-    await bujo.addGoal('2026-W53', 'Last week of the year')
     await bujo.addEntry('2026-11', 'task', 'sometime in November')
+    await bujo.addEntry('2026-W49', 'task', 'sometime in week 49')
+    await bujo.addEntry('2026-W53', 'task', 'last week of the year')
     await bujo.addEntry('2026-11-30', 'task', 'monday')
     await bujo.addEntry('2026-12-06', 'task', 'sunday')
     await bujo.addEntry('2026-12-31', 'task', 'new year eve')
@@ -73,53 +75,188 @@ describe('goals and period keys', () => {
     expect((await bujo.getEntriesForDate('2026-11-30')).map((d) => d.entry.body)).toEqual(['monday'])
   })
 
-  it('tracks goal outcome in goalState, leaving status alone', async () => {
+  it('completes, drops and reopens a week task like any other', async () => {
     const { bujo } = newBujo()
-    const goal = await bujo.addGoal('2026-W47', 'Ship it')
+    const task = await bujo.addEntry('2026-W47', 'task', 'Ship it')
 
-    const achieved = await bujo.completeEntry(goal)
-    expect(achieved).toMatchObject({ status: 'goal', goalState: 'achieved' })
-    expect(isClosed(achieved)).toBe(true)
+    const done = await bujo.completeEntry(task)
+    expect(done).toMatchObject({ status: 'completed', date: '2026-W47' })
+    expect(isClosed(done)).toBe(true)
 
-    const dropped = await bujo.dropEntry(achieved)
-    expect(dropped).toMatchObject({ status: 'goal', goalState: 'dropped' })
+    const dropped = await bujo.dropEntry(done)
+    expect(dropped.status).toBe('dropped')
 
     const reopened = await bujo.reopenEntry(dropped)
-    expect(reopened.status).toBe('goal')
-    expect(reopened.goalState).toBeUndefined()
+    expect(reopened.status).toBe('task')
     expect(isOpen(reopened)).toBe(true)
   })
 
-  it('moves a goal to another period, keeping its ref and leaving no ghost', async () => {
+  it('moves between a day, a week and a month, keeping the ref; only days keep a ghost', async () => {
     const { db, bujo } = newBujo()
-    const goal = await bujo.addGoal('2026-W47', 'Slipped a week')
-    const moved = await bujo.rescheduleEntry(goal, '2026-W48')
+    const task = await bujo.addEntry('2026-W47', 'task', 'Slipped a week')
+    const moved = await bujo.rescheduleEntry(task, '2026-W48')
 
-    expect(moved._id).toBe(goal._id.replace('2026-W47', '2026-W48'))
+    expect(moved._id).toBe(task._id.replace('2026-W47', '2026-W48'))
     expect(moved.dateHistory).toEqual(['2026-W47'])
     expect((await dump(db)).ghosts).toHaveLength(0)
-    expect(await bujo.getGoals('2026-W47')).toEqual([])
+    expect(await bujo.getEntriesForPeriod('2026-W47')).toEqual([])
 
-    const monthly = await bujo.rescheduleEntry(moved, '2026-12')
-    expect(monthly.date).toBe('2026-12')
+    const onDay = await bujo.rescheduleEntry(moved, '2026-11-25')
+    expect(onDay.date).toBe('2026-11-25')
+    const monthly = await bujo.rescheduleEntry(onDay, '2026-12')
+    expect(monthly).toMatchObject({ date: '2026-12', dateHistory: ['2026-W47', '2026-W48', '2026-11-25'] })
+    expect(((await dump(db)).ghosts as GhostEntry[]).map((g) => g.date)).toEqual(['2026-11-25'])
   })
 
-  it('only allows goals on weeks and months, and only goals on weeks', async () => {
+  it('refuses dates that do not exist', async () => {
     const { bujo } = newBujo()
-    await expect(bujo.addGoal('2026-11-21', 'daily goal')).rejects.toBeInstanceOf(InvalidError)
-    await expect(bujo.addGoal(UNSCHEDULED, 'floating goal')).rejects.toBeInstanceOf(InvalidError)
-    await expect(bujo.addGoal('2026-W54', 'no such week')).rejects.toBeInstanceOf(InvalidError)
-    await expect(bujo.addEntry('2026-W47', 'task', 'weekly task')).rejects.toThrow(/Only goals/)
+    await expect(bujo.addEntry('2026-W54', 'task', 'no such week')).rejects.toBeInstanceOf(InvalidError)
+    await expect(bujo.addEntry('2026-13', 'task', 'no such month')).rejects.toBeInstanceOf(InvalidError)
     await expect(bujo.addEntry('not-a-date', 'task', 'x')).rejects.toThrow(/Invalid date/)
     await expect(bujo.addEntry('', 'task', 'x')).rejects.toBeInstanceOf(InvalidError)
-
-    const goal = await bujo.addGoal('2026-W47', 'goal')
-    await expect(bujo.rescheduleEntry(goal, '2026-11-25')).rejects.toBeInstanceOf(InvalidError)
-    await expect(bujo.updateEntry(goal, { status: 'task' })).rejects.toThrow(/goal cannot be turned/)
     const task = await bujo.addEntry('2026-11-21', 'task', 'task')
-    await expect(bujo.rescheduleEntry(task, '2026-W48')).rejects.toBeInstanceOf(InvalidError)
-    await expect(bujo.updateEntry(task, { status: 'goal' })).rejects.toBeInstanceOf(InvalidError)
-    await expect(bujo.updateEntry(task, { goalState: 'achieved' })).rejects.toThrow(/Only goals/)
+    await expect(bujo.rescheduleEntry(task, '2026-W54')).rejects.toBeInstanceOf(InvalidError)
+  })
+})
+
+describe('goals stored by earlier versions', () => {
+  // What a goal looked like: its own status, the outcome in `goalState`.
+  const legacy = (id: string, body: string, goalState?: string) => ({
+    _id: id,
+    type: 'entry',
+    date: id.split(':')[0],
+    status: 'goal',
+    body,
+    createdAt: Number(id.split(':')[1]),
+    ...(goalState ? { goalState } : {}),
+  })
+
+  async function seed() {
+    const { db, bujo } = newBujo()
+    await db.bulkDocs([
+      legacy('2026-W47:1000:aaaaaa', 'Open goal'),
+      legacy('2026-W47:2000:bbbbbb', 'Achieved goal', 'achieved'),
+      legacy('2026-11:3000:cccccc', 'Dropped goal', 'dropped'),
+    ] as unknown as BujoEntry[])
+    return { db, bujo }
+  }
+
+  it('reads them as the tasks they now are', async () => {
+    const { bujo } = await seed()
+    const week = await bujo.getEntriesForPeriod('2026-W47')
+    expect(week.map((e) => [e.body, e.status])).toEqual([['Open goal', 'task'], ['Achieved goal', 'completed']])
+    expect((await bujo.getEntriesForPeriod('2026-11'))[0]).toMatchObject({ status: 'dropped' })
+    expect(week.every((e) => !('goalState' in e))).toBe(true)
+    expect((await bujo.findEntry('aaaaaa')).status).toBe('task')
+  })
+
+  it('stores one as a task the next time it is written', async () => {
+    const { db, bujo } = await seed()
+    await bujo.completeEntry(await bujo.findEntry('aaaaaa'))
+    const stored = (await db.get('2026-W47:1000:aaaaaa')) as unknown as Record<string, unknown>
+    expect(stored.status).toBe('completed')
+    expect(stored.goalState).toBeUndefined()
+  })
+
+  it('rewrites all of them on request, once', async () => {
+    const { db, bujo } = await seed()
+    await bujo.addEntry('2026-11-21', 'task', 'An ordinary task')
+
+    expect(await bujo.upgradeStoredEntries()).toBe(3)
+    const stored = (await dump(db)).entries as unknown as Record<string, unknown>[]
+    expect(stored.map((e) => e.status).sort()).toEqual(['completed', 'dropped', 'task', 'task'])
+    expect(stored.some((e) => 'goalState' in e)).toBe(false)
+
+    expect(await bujo.upgradeStoredEntries()).toBe(0)
+  })
+})
+
+describe('subtasks', () => {
+  it('links a new entry to its parent by the part of the id that survives a move', async () => {
+    const { bujo } = newBujo()
+    const epic = await bujo.addEntry('2026-W47', 'task', 'Ship v2')
+    const sub = await bujo.addEntry('2026-11-17', 'task', 'Write the changelog', { parent: epic })
+    expect(sub.parent).toBe(idTail(epic._id))
+
+    // Moving either one changes neither the link nor what it finds
+    const movedEpic = await bujo.rescheduleEntry(epic, '2026-W48')
+    const movedSub = await bujo.rescheduleEntry(sub, '2026-11-24')
+    expect(movedSub.parent).toBe(idTail(movedEpic._id))
+    expect((await bujo.getChildren(movedEpic)).map((e) => e.body)).toEqual(['Write the changelog'])
+  })
+
+  it('attaches and detaches an existing entry', async () => {
+    const { bujo } = newBujo()
+    const epic = await bujo.addEntry('2026-W47', 'task', 'Ship v2')
+    const task = await bujo.addEntry('2026-11-17', 'task', 'Tag the release')
+
+    const attached = await bujo.setParent(task, epic)
+    expect(attached.parent).toBe(idTail(epic._id))
+    expect(await bujo.getChildren(epic)).toHaveLength(1)
+
+    const detached = await bujo.setParent(attached, null)
+    expect(detached.parent).toBeUndefined()
+    expect(await bujo.getChildren(epic)).toEqual([])
+  })
+
+  it('goes one level deep only', async () => {
+    const { bujo } = newBujo()
+    const epic = await bujo.addEntry('2026-W47', 'task', 'Epic')
+    const sub = await bujo.addEntry('2026-11-17', 'task', 'Subtask', { parent: epic })
+    const other = await bujo.addEntry('2026-11-17', 'task', 'Other')
+
+    // A subtask cannot take subtasks…
+    await expect(bujo.addEntry('2026-11-17', 'task', 'Deeper', { parent: sub })).rejects.toThrow(/subtasks of its own/)
+    await expect(bujo.setParent(other, sub)).rejects.toThrow(/subtasks of its own/)
+    // …and an epic cannot become one
+    await expect(bujo.setParent(epic, other)).rejects.toThrow(/cannot become a subtask/)
+    await expect(bujo.setParent(epic, epic)).rejects.toThrow(/its own subtask/)
+  })
+
+  it('only lets a task hold subtasks', async () => {
+    const { bujo } = newBujo()
+    const note = await bujo.addEntry('2026-11-17', 'note', 'A note')
+    const event = await bujo.addEntry('2026-11-17', 'event', 'An event')
+    await expect(bujo.addEntry('2026-11-17', 'task', 'x', { parent: note })).rejects.toThrow(/Only a task/)
+    await expect(bujo.addEntry('2026-11-17', 'task', 'x', { parent: event })).rejects.toThrow(/Only a task/)
+
+    const epic = await bujo.addEntry('2026-W47', 'task', 'Epic')
+    await bujo.addEntry('2026-11-17', 'note', 'A note under it', { parent: epic })
+    await expect(bujo.updateEntry(epic, { status: 'note' })).rejects.toThrow(/has subtasks/)
+    // Completing or dropping an epic is fine, and leaves its subtasks alone
+    expect((await bujo.completeEntry(epic)).status).toBe('completed')
+    expect((await bujo.getChildren(epic))[0].status).toBe('note')
+  })
+
+  it('keeps the subtasks of a deleted epic, as tasks of their own', async () => {
+    const { db, bujo } = newBujo()
+    const epic = await bujo.addEntry('2026-W47', 'task', 'Epic')
+    await bujo.addEntry('2026-11-17', 'task', 'One', { parent: epic })
+    await bujo.addEntry('2026-11-18', 'task', 'Two', { parent: epic })
+
+    await bujo.deleteEntry(epic)
+    const left = (await dump(db)).entries as BujoEntry[]
+    expect(left.map((e) => e.body)).toEqual(['One', 'Two'])
+    expect(left.every((e) => e.parent === undefined)).toBe(true)
+  })
+
+  it('counts progress over the subtasks that are tasks', async () => {
+    const { bujo } = newBujo()
+    const epic = await bujo.addEntry('2026-W47', 'task', 'Epic')
+    const done = await bujo.addEntry('2026-11-17', 'task', 'Done', { parent: epic })
+    await bujo.completeEntry(done)
+    await bujo.addEntry('2026-11-18', 'task', 'Open', { parent: epic })
+    const dropped = await bujo.addEntry('2026-11-18', 'task', 'Dropped', { parent: epic })
+    await bujo.dropEntry(dropped)
+    await bujo.addEntry('2026-11-18', 'note', 'A note', { parent: epic })
+    const loner = await bujo.addEntry('2026-11-18', 'task', 'Not part of anything')
+
+    const families = familyIndex(await bujo.getAllEntries())
+    expect(families.progressOf(epic)).toEqual({ done: 1, total: 2 })
+    expect(families.childrenOf(epic).map((e) => e.body)).toEqual(['Done', 'Open', 'Dropped', 'A note'])
+    expect(families.parentOf(done)?.body).toBe('Epic')
+    expect(families.progressOf(loner)).toBeNull()
+    expect(families.parentOf(loner)).toBeUndefined()
   })
 })
 
@@ -140,10 +277,11 @@ describe('future log (month-dated entries)', () => {
     expect(((await dump(db)).ghosts as GhostEntry[]).map((g) => g.date)).toEqual(['2026-11-21'])
   })
 
-  it('does not list monthly goals as future log items', async () => {
+  it('lists everything dated to a month as a whole', async () => {
     const { bujo } = newBujo()
-    await bujo.addGoal('2026-12', 'December goal')
     await bujo.addEntry('2026-12', 'task', 'December task')
+    await bujo.addEntry('2026-W50', 'task', 'A week in December')
+    await bujo.addEntry('2026-12-09', 'task', 'A day in December')
     expect((await bujo.getMonthScheduledEntries()).map((e) => e.body)).toEqual(['December task'])
   })
 })

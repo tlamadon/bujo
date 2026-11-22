@@ -2,8 +2,8 @@
 //
 // An entry's `date` is one of:
 //   day          YYYY-MM-DD   the daily log
-//   month        YYYY-MM      the future log ("some time in December"), or a monthly goal
-//   week         YYYY-Www     an ISO week (Monday start); weekly goals only
+//   week         YYYY-Www     "some time this week": an ISO week (Monday start)
+//   month        YYYY-MM      "some time in December"
 //   unscheduled  ~unscheduled
 //
 // All of them are plain strings, used as the prefix of the entry's `_id`, so
@@ -158,6 +158,19 @@ export function monthDays(month: string): string[] {
   return days
 }
 
+// ─── Carrying forward ──────────────────────────────────────────────
+
+/**
+ * Where an entry left behind on `date` belongs now, keeping its grain: a past
+ * day becomes today, a past week the current week, a past month the current
+ * month. Null when `date` is not in the past (or has no place in time).
+ */
+export function carryForwardDate(date: string, today: string): string | null {
+  const current = isDayDate(date) ? today : isWeekKey(date) ? isoWeekKey(today) : isMonthKey(date) ? monthKey(today) : null
+  // Same-format keys compare as strings: YYYY-MM-DD, YYYY-Www, YYYY-MM
+  return current !== null && date < current ? current : null
+}
+
 // ─── Periods ───────────────────────────────────────────────────────
 
 /** First and last day of a week or month key. */
@@ -187,7 +200,7 @@ const WEEKDAYS: Record<string, number> = {
 
 const DATE_HELP =
   'Use YYYY-MM-DD, YYYY-MM, YYYY-Www, today, tomorrow, yesterday, mon..sun, +3d, +2w, ' +
-  'next-week, this-month, next-month or unscheduled'
+  'this-week, next-week, this-month, next-month or unscheduled'
 
 /**
  * Turn user input into a date value, relative to `today`.
@@ -195,6 +208,7 @@ const DATE_HELP =
  *   today, tomorrow, yesterday      that day
  *   mon … sun                       the next such weekday, strictly after today
  *   +3d, -1d, +2w, +3               days (default) or weeks from today
+ *   this-week                       the current week as a whole (a week key)
  *   next-week                       Monday of next week
  *   this-month, next-month          a month key (future log)
  *   YYYY-MM-DD, YYYY-MM, YYYY-Www   as given, validated
@@ -209,6 +223,7 @@ export function parseDateInput(input: string, today: string): string {
   if (s === 'tomorrow' || s === 'tom') return addDays(today, 1)
   if (s === 'yesterday') return addDays(today, -1)
   if (s === 'unscheduled' || s === 'someday' || s === 'none' || s === UNSCHEDULED) return UNSCHEDULED
+  if (s === 'this-week') return isoWeekKey(today)
   if (s === 'next-week') return addDays(weekStart(isoWeekKey(today)), 7)
   if (s === 'this-month') return monthKey(today)
   if (s === 'next-month') return addMonths(monthKey(today), 1)

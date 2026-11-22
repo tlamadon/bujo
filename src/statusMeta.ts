@@ -8,14 +8,12 @@ export const STATUS_ICONS: Record<BujoStatus, string> = {
   note: '–',
   event: '○',
   dropped: '•',
-  goal: '◇',
 }
 
 /** Kinds of entry offered when adding one to a log */
 export const NEW_ENTRY_STATUSES: BujoStatus[] = ['task', 'event', 'note']
 
 export const STATUS_ORDER: Record<BujoStatus, number> = {
-  goal: -1,
   task: 0,
   migrated: 1,
   scheduled: 2,
@@ -43,16 +41,14 @@ export function displayEntryKey(de: DisplayEntry): string {
   return de.isGhost ? `ghost-${de.ghostDoc?._id}` : de.entry._id
 }
 
-/** The signifier for an entry (an achieved goal gets a filled diamond) */
+/** The signifier for an entry */
 export function entryIcon(entry: BujoEntry): string {
-  if (entry.status === 'goal' && entry.goalState === 'achieved') return '◆'
   return STATUS_ICONS[entry.status] ?? '•'
 }
 
 /** CSS classes describing an entry's state, for the list item wrapping it */
 export function entryClass(entry: BujoEntry): string {
   const classes = [`status-${entry.status}`]
-  if (entry.goalState) classes.push(`goal-${entry.goalState}`)
   if (entry.priority) classes.push('is-priority')
   return classes.join(' ')
 }

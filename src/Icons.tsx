@@ -89,3 +89,10 @@ export const TagIcon = () => (
     <path d="M8 3 6.5 17M13.5 3 12 17M4 7.5h13M3 12.5h13" />
   </Icon>
 )
+
+/** An epic: a task with subtasks */
+export const Bolt = () => (
+  <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" focusable="false">
+    <path d="M11.5 1 3.5 11.5H9L7.5 19l9-11H11z" />
+  </svg>
+)

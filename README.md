@@ -125,7 +125,7 @@ $ bujo done plumber
 done  we6zzh  *× Call plumber about the leak #house
 ```
 
-Signifiers: `•` task, `×` done, `>` migrated, `<` sent to the future log, `–` note, `○` event, `◇`/`◆` goal (open/achieved), `*` priority. Dropped entries are struck through (`~~like this~~` when colors are off). The six characters in front of each entry are its **ref**.
+Signifiers: `•` task, `×` done, `>` migrated, `<` sent to the future log, `–` note, `○` event, `*` priority. Dropped entries are struck through (`~~like this~~` when colors are off). A task with subtasks is an **epic**: it shows `⚡done/total`, and each of its subtasks shows `‹ epic text`. The six characters in front of each entry are its **ref**.
 
 ### Install
 
@@ -198,28 +198,29 @@ Run `bujo <command> --help` for the options of each. With no command, `bujo` sho
 |---|---|
 | **Look** | |
 | `bujo today [--date D]` | Daily log: open tasks first (priority on top), then events by time, notes, done, dropped, and ghosts of entries that moved away |
-| `bujo week [YYYY-Www\|+1\|-1]` | The week's goals, then each day Monday to Sunday |
-| `bujo month [YYYY-MM\|+1\|-1]` | The month's goals, items with no day yet, a calendar summary, open tasks, events |
+| `bujo week [YYYY-Www\|+1\|-1]` | What is for the week as a whole (no day yet), then each day Monday to Sunday |
+| `bujo month [YYYY-MM\|+1\|-1]` | What is for the month as a whole, a calendar summary, open tasks, events |
 | `bujo future [--all]` | Unscheduled entries and everything after today, by month |
 | `bujo tag <name> [--open]` | A collection: every entry with that `#tag` |
 | `bujo tags` | All tags with open/total counts |
 | `bujo search <text> [--open]` | Entries containing the text |
-| `bujo show <ref>` | One entry in full, with its date history |
+| `bujo show <ref>` | One entry in full: date history, the epic it belongs to, its subtasks |
 | `bujo stale [--min-moves 3]` | Open tasks moved N+ times — drop or do? |
-| `bujo review week\|month [which]` | Read-only bundle for a review: counts, goals and their state, completed, still open, dropped, migrated out, stale |
+| `bujo review week\|month [which]` | Read-only bundle for a review: counts, completed, still open, dropped, migrated out, stale |
 | **Capture** | |
-| `bujo add <text> [--date D] [--event] [--time HH:MM] [--note] [--priority]` | A task (default), event or note. `#tags` in the text become collections. `--time` implies `--event` |
-| `bujo goal <text> [--week [W] \| --month [M]] [--priority]` | A goal for a week (default: this week) or a month |
+| `bujo add <text> [--date D \| --week [W] \| --month [M]] [--event] [--time HH:MM] [--note] [--priority] [--parent <ref>]` | A task (default), event or note. `#tags` in the text become collections. `--time` implies `--event`. `--week` / `--month` date it to a week or month as a whole; `--parent` makes it a subtask |
+| `bujo goal <text> [--week [W] \| --month [M]] [--priority]` | Short for `bujo add <text> --week` (or `--month`) |
 | **Change** | |
-| `bujo done <ref...>` | Mark done (a goal: achieved) |
+| `bujo done <ref...>` | Mark done |
 | `bujo drop <ref...>` | No longer relevant; kept, struck through |
 | `bujo undo <ref...>` | Reopen something done or dropped |
-| `bujo move <ref> <date>` | Reschedule. Leaves a ghost on the old day and appends to `dateHistory` |
+| `bujo move <ref> <date>` | Reschedule to a day, a week, a month or `unscheduled`. Leaves a ghost on the old day and appends to `dateHistory` |
+| `bujo parent <ref> <parent\|none>` | Make an entry a subtask of a task, or detach it |
 | `bujo schedule <ref> <YYYY-MM\|unscheduled>` | Send to the future log |
 | `bujo edit <ref> <text>` | Replace the text (tags are re-read) |
 | `bujo prio <ref...> [--off]` | Set or clear the priority mark |
-| `bujo rm <ref...>` | Delete for good, with its ghosts |
-| `bujo migrate [--dry-run]` | Move open tasks from earlier days to today, like the button in the app |
+| `bujo rm <ref...>` | Delete for good, with its ghosts. The subtasks of a deleted epic are kept |
+| `bujo migrate [--dry-run]` | Carry open tasks forward, like the button in the app: from earlier days to today, from earlier weeks and months to the current one |
 | **Setup** | |
 | `bujo config`, `bujo doctor` | Show the configuration; check connection, auth and write access |
 
@@ -250,10 +251,13 @@ exit code 2
 | `mon` … `sun` (or full names) | The next such weekday, never today |
 | `+3d`, `-1d`, `+2w`, `+3` | Days (default) or weeks from today |
 | `next-week` | Monday of next week |
-| `2027-02`, `this-month`, `next-month` | A month: the future log, "some time in February" |
+| `2026-W48`, `this-week` | A week as a whole: "some time that week" |
+| `2027-02`, `this-month`, `next-month` | A month as a whole: "some time in February" |
 | `unscheduled` (`someday`, `none`) | No date |
 
-Goals take a week (`2026-W48`, `this`, `next`, `+1`) or a month (`2026-12`, `next`, `+1`). Weeks are ISO weeks and start on Monday.
+`add --week` and `add --month` take a week (`2026-W48`, `this`, `next`, `+1`) or a month (`2026-12`, `next`, `+1`). Weeks are ISO weeks and start on Monday.
+
+**Epics and subtasks.** Any task can have subtasks; that is all an epic is. `bujo add "Write the changelog" --parent <ref>` adds one, `bujo parent <ref> <epic>` attaches an existing entry and `bujo parent <ref> none` detaches it. An epic and its subtasks are dated independently — typically the epic for a week or a month, its subtasks on days. Nothing cascades: finishing the last subtask does not complete the epic, and completing the epic leaves its subtasks alone. Subtasks go one level deep.
 
 **Exit codes.** `0` success · `1` error (bad input, configuration, connection, a refused confirmation) · `2` a reference matched no entry, or more than one. Results go to stdout, errors to stderr.
 
@@ -304,7 +308,8 @@ Errors are printed on stderr, also as JSON, with the exit codes above:
   "priority": false,
   "open": true,
   "time": null,
-  "goalState": null,
+  "parent": { "ref": "k3m9qa", "text": "Clear out the house" },
+  "subtasks": null,
   "dateHistory": ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19"],
   "moves": 4,
   "createdAt": "2026-11-21T17:14:45.938Z"
@@ -315,13 +320,14 @@ Errors are printed on stderr, also as JSON, with the exit codes above:
 |---|---|
 | `ref` | Short stable reference. Use this to target the entry later |
 | `id` | Full document id. Its date prefix changes when the entry moves; the rest never does |
-| `status` | `task` · `completed` · `dropped` · `note` · `event` · `goal` (and `migrated` / `scheduled`, which only old entries carry) |
+| `status` | `task` · `completed` · `dropped` · `note` · `event` (and `migrated` / `scheduled`, which only old entries carry) |
 | `date`, `dateKind` | `YYYY-MM-DD` (`day`), `YYYY-MM` (`month`), `YYYY-Www` (`week`) or `"unscheduled"` (`unscheduled`) |
 | `body`, `text`, `tags` | Text as written; text without `#tags`; the tags, lowercase |
 | `priority` | The `*` signifier |
-| `open` | Still to do: an open task or an open goal |
+| `open` | Still to do: an open task |
 | `time` | `HH:MM` for a timed event, else `null` |
-| `goalState` | `open` · `achieved` · `dropped` for goals, `null` for everything else |
+| `parent` | `{ ref, text }` of the epic this entry is a subtask of, else `null` |
+| `subtasks` | For an epic, `{ done, total }` over its subtasks that are tasks (dropped ones, notes and events do not count); `null` for an entry without subtasks |
 | `dateHistory`, `moves` | Dates the entry was on before, oldest first, and how many (`moves == dateHistory.length`) |
 | `createdAt` | ISO 8601 timestamp |
 
@@ -331,25 +337,25 @@ A **ghost** — an entry seen on a day it was moved away from — is an entry pl
 
 | Command | Fields |
 |---|---|
-| `today` | `date`, `weekday`, `isToday`, `week`, `entries[]`, `ghosts[]`, `overdue[]` (open tasks left on earlier days; only filled for today) |
-| `week` | `week`, `start`, `end`, `current`, `goals[]`, `days[]` of `{ date, weekday, isToday, entries[], ghosts[] }` |
-| `month` | `month`, `start`, `end`, `current`, `goals[]`, `undated[]`, `open[]`, `events[]`, `days[]` of `{ date, weekday, isToday, counts: { total, open, completed, dropped, events, notes, ghosts } }` |
+| `today` | `date`, `weekday`, `isToday`, `week`, `entries[]`, `ghosts[]`, `overdue[]` (open tasks left on earlier days, in earlier weeks and months; only filled for today) |
+| `week` | `week`, `start`, `end`, `current`, `undated[]` (dated to the week as a whole), `days[]` of `{ date, weekday, isToday, entries[], ghosts[] }` |
+| `month` | `month`, `start`, `end`, `current`, `undated[]` (dated to the month as a whole), `open[]`, `events[]`, `days[]` of `{ date, weekday, isToday, counts: { total, open, completed, dropped, events, notes, ghosts } }` |
 | `future` | `unscheduled[]`, `months[]` of `{ month, entries[] }` |
 | `tag` | `tag`, `name`, `color`, `open`, `total`, `entries[]` |
 | `tags` | `tags[]` of `{ name, color, open, total }` |
 | `search` | `query`, `entries[]` |
-| `show` | `entry`, `ghostDates[]` |
+| `show` | `entry`, `subtasks[]`, `ghostDates[]` |
 | `stale` | `minMoves`, `entries[]` |
-| `review` | `kind`, `period`, `start`, `end`, `current`, `counts: { completed, open, dropped, migrated, events, notes, goals: { open, achieved, dropped } }`, `goals[]`, `monthGoals[]` of `{ month, goals[] }` (weekly reviews), `completed[]`, `open[]`, `dropped[]`, `migrated[]` (ghosts), `stale[]`, `staleMinMoves` |
+| `review` | `kind`, `period`, `start`, `end`, `current`, `counts: { completed, open, dropped, migrated, events, notes }`, `monthTasks[]` of `{ month, entries[] }` (weekly reviews: what the month holds as a whole), `completed[]`, `open[]`, `dropped[]`, `migrated[]` (ghosts), `stale[]`, `staleMinMoves` |
 | `add`, `goal` | `entry` |
-| `done`, `drop`, `undo`, `edit`, `prio` | `entries[]`, after the change |
+| `done`, `drop`, `undo`, `edit`, `prio`, `parent` | `entries[]`, after the change |
 | `move`, `schedule` | `from`, `entry` |
 | `rm` | `deleted[]` |
 | `migrate` | `dryRun`, `count`, `entries[]` (after the move; with `--dry-run`, as they are now) |
 | `config` | `path`, `fileFound`, `url`, `auth[]`, `user`, `cfClientId`, `hasPassword`, `hasCfClientSecret`, `userId`, `timezone`, `sources`, `env` |
 | `doctor` | `checks[]` of `{ name, status: ok \| warn \| fail, detail }`; `ok` is false and the exit code 1 if any check fails |
 
-In a review, counts go by where entries are dated: a task counts as completed in the week it was completed *on*. `migrated` are entries that were on a day of the period and now live outside it.
+In a review, the period's entries are those on its days and those dated to the period as a whole (for a month, also those dated to a week starting in it). Counts go by where entries are dated: a task counts as completed in the week it was completed *in*. `migrated` are entries that were in the period and now live outside it.
 
 ```console
 $ bujo review week --json | jq '.counts'
@@ -359,12 +365,7 @@ $ bujo review week --json | jq '.counts'
   "dropped": 1,
   "migrated": 0,
   "events": 0,
-  "notes": 1,
-  "goals": {
-    "open": 1,
-    "achieved": 0,
-    "dropped": 0
-  }
+  "notes": 1
 }
 ```
 
@@ -390,9 +391,9 @@ This is off unless all three variables are set, and browser logins work exactly 
 
 ### Data model
 
-Everything is a CouchDB document; the new fields are optional, so older documents and older app versions keep working.
+Everything is a CouchDB document; the new fields are optional, so older documents keep working. An app or CLI older than the one that wrote a week-dated task or a subtask link simply does not show them.
 
-**Entries** — `{ type: "entry", date, status, body, tags, dateHistory, createdAt, userId }`, plus when used: `priority: true`, `time: "HH:MM"` (events), `goalState: "achieved" | "dropped"` (goals), `prevStatus` (what a note or event was before it was completed or dropped, so `undo` restores it).
+**Entries** — `{ type: "entry", date, status, body, tags, dateHistory, createdAt, userId }`, plus when used: `priority: true`, `time: "HH:MM"` (events), `parent` (the entry this one is a subtask of, see below), `prevStatus` (what a note or event was before it was completed or dropped, so `undo` restores it).
 
 **Ids and refs.** `_id` is `<date>:<createdAt ms>:<uid>`. The date prefix makes "everything on this day" a key-range query. Rescheduling replaces only that prefix — CouchDB cannot rename a document, so the entry is rewritten under the new id and the old one deleted — and the `<createdAt ms>:<uid>` tail never changes. The 6-character `uid` is the short ref. Existing entries already have this shape, so they got stable refs without a migration. Two entries could in principle share a `uid`; the CLI then reports the ref as ambiguous and the full id still works.
 
@@ -401,15 +402,19 @@ Everything is a CouchDB document; the new fields are optional, so older document
 | Kind | Format | Used for |
 |---|---|---|
 | day | `2026-11-21` | The daily log |
-| month | `2026-11` | The future log ("some time in November"), and monthly goals |
-| week | `2026-W47` | Weekly goals. ISO 8601 week, Monday start |
+| week | `2026-W47` | "Some time that week". ISO 8601 week, Monday start |
+| month | `2026-11` | "Some time in November" |
 | unscheduled | `~unscheduled` | No date yet |
 
-Goals are entries with `status: "goal"` whose `date` is a week or month key, so their id starts with it: one prefix query (`2026-W47:` … or `2026-11:` …) returns the goals of a period. In key order a month sorts right after its own days and before the next month, and a year's weeks sort after its months, before the next year. Day-range queries return day-dated entries only, so goals and future-log items never show up in a daily or weekly list by accident.
+An entry dated to a week or a month has an id starting with that key: one prefix query (`2026-W47:` … or `2026-11:` …) returns everything for the period as a whole. In key order a month sorts right after its own days and before the next month, and a year's weeks sort after its months, before the next year. Day-range queries return day-dated entries only, so week- and month-level entries never show up in a day's list by accident.
+
+**Subtasks.** An entry may carry `parent`: the `<createdAt ms>:<uid>` tail of another entry's id — the part that survives rescheduling, so the link holds wherever either one moves. An entry that others name as their parent is an epic; nothing is stored on the epic itself. Links go one level deep, and only a task can be a parent.
+
+**Goals** used to be a separate kind of entry (`status: "goal"`, outcome in `goalState`). They are now ordinary tasks dated to a week or a month. Entries stored the old way are read as tasks (`achieved` → `completed`), and rewritten that way the next time they are saved or the app starts.
 
 **Ghosts** — `{ type: "ghost", date, ref }` with id `ghost:<day>:<entry tail>`: one per day an entry was moved away from, pointing at where it is now. A ghost is removed when its entry comes back to that day.
 
-**Migration** moves open tasks from days before today to today. A task dated to a month moves only once that month is over. Goals are never migrated: an unmet goal stays in its period for the review.
+**Migration** carries open tasks forward and keeps their grain: a task left on a day before today moves to today, one left in a week before the current one moves to the current week, one left in a month before the current one to the current month.
 
 ## Development
 

@@ -11,8 +11,9 @@ import ShortcutsHelp from './ShortcutsHelp'
 import SyncIndicator from './SyncIndicator'
 import Toaster from './Toaster'
 import { DayIcon, FutureIcon, MonthIcon, TagIcon, WeekIcon } from './Icons'
-import { useTags } from './hooks'
-import { isoWeekKey, monthKey, type BujoEntry } from './db'
+import { FamiliesContext } from './families'
+import { useAllEntries, useTags } from './hooks'
+import { familyIndex, isoWeekKey, monthKey, upgradeStoredEntries, type BujoEntry } from './db'
 import {
   defaultRoute,
   navigate,
@@ -55,6 +56,16 @@ export default function App() {
   const tags = useTags()
   const tagColors = useMemo(() => new Map((tags ?? []).map((t) => [t.name, t.color])), [tags])
 
+  // Which entries are subtasks of which: rows show it, wherever they are.
+  const allEntries = useAllEntries()
+  const families = useMemo(() => familyIndex(allEntries ?? []), [allEntries])
+
+  // Entries from before goals became ordinary tasks are read as tasks either
+  // way; this stores them so. It finds nothing to do on every later start.
+  useEffect(() => {
+    upgradeStoredEntries().catch(() => {})
+  }, [])
+
   // ─── Navigation ──────────────────────────────────────────────────
 
   // Each view remembers where it was, so switching tabs and back does not
@@ -91,8 +102,11 @@ export default function App() {
   const detailInHistory = useRef(false)
 
   const openDetail = useCallback((entry: BujoEntry) => {
-    window.history.pushState({ detail: true }, '')
-    detailInHistory.current = true
+    // Going from one entry to another inside the panel is still one "Back"
+    if (!detailInHistory.current) {
+      window.history.pushState({ detail: true }, '')
+      detailInHistory.current = true
+    }
     setDetailEntry(entry)
   }, [])
 
@@ -206,58 +220,69 @@ export default function App() {
 
   return (
     <TagColorsContext.Provider value={tagColors}>
-      <div className="app" data-view={route.view}>
-        <header className="app-bar">
-          <a className="app-title" href={routeHash(defaultRoute('daily'))} title="Today">
-            BuJo <span className="app-version">v{__APP_VERSION__}</span>
-          </a>
+      <FamiliesContext.Provider value={families}>
+        <div className="app" data-view={route.view}>
+          <header className="app-bar">
+            <a className="app-title" href={routeHash(defaultRoute('daily'))} title="Today">
+              BuJo <span className="app-version">v{__APP_VERSION__}</span>
+            </a>
 
-          <nav className="view-nav" aria-label="Views">
-            {VIEWS.map((view, i) => (
-              <a
-                key={view}
-                href={routeHash(defaultRoute(view))}
-                aria-current={route.view === view ? 'page' : undefined}
-                title={`${VIEW_META[view].label} (${i + 1})`}
-                onClick={(e) => {
-                  // Leave "open in new tab" and friends to the browser
-                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
-                  e.preventDefault()
-                  goToView(view)
-                }}
+            <nav className="view-nav" aria-label="Views">
+              {VIEWS.map((view, i) => (
+                <a
+                  key={view}
+                  href={routeHash(defaultRoute(view))}
+                  aria-current={route.view === view ? 'page' : undefined}
+                  title={`${VIEW_META[view].label} (${i + 1})`}
+                  onClick={(e) => {
+                    // Leave "open in new tab" and friends to the browser
+                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+                    e.preventDefault()
+                    goToView(view)
+                  }}
+                >
+                  {VIEW_META[view].icon}
+                  <span>{VIEW_META[view].label}</span>
+                </a>
+              ))}
+            </nav>
+
+            <div className="app-bar-end">
+              <SyncIndicator />
+              <button
+                type="button"
+                className="help-btn"
+                onClick={() => setShowHelp(true)}
+                aria-label="Keyboard shortcuts"
+                title="Keyboard shortcuts (?)"
               >
-                {VIEW_META[view].icon}
-                <span>{VIEW_META[view].label}</span>
-              </a>
-            ))}
-          </nav>
+                ?
+              </button>
+            </div>
+          </header>
 
-          <div className="app-bar-end">
-            <SyncIndicator />
-            <button
-              type="button"
-              className="help-btn"
-              onClick={() => setShowHelp(true)}
-              aria-label="Keyboard shortcuts"
-              title="Keyboard shortcuts (?)"
-            >
-              ?
-            </button>
-          </div>
-        </header>
+          <main
+            className="app-main"
+            onTouchStart={onTouchStart}
+            onTouchEnd={onTouchEnd}
+          >
+            {content}
+          </main>
 
-        <main
-          className="app-main"
-          onTouchStart={onTouchStart}
-          onTouchEnd={onTouchEnd}
-        >
-          {content}
-        </main>
-
-        <Toaster />
-        {detailEntry && <TaskDetail entry={detailEntry} today={today} onClose={closeDetail} />}
-        {showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)} />}
-      </div>
+          <Toaster />
+          {detailEntry && (
+            // Keyed: a different entry is a fresh panel, not this one with stale fields
+            <TaskDetail
+              key={detailEntry._id}
+              entry={detailEntry}
+              today={today}
+              onClose={closeDetail}
+              onOpenEntry={openDetail}
+            />
+          )}
+          {showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)} />}
+        </div>
+      </FamiliesContext.Provider>
     </TagColorsContext.Provider>
   )
 }

@@ -90,21 +90,15 @@ function bullet(entry: EntryView, ghost: boolean): string {
       return '–'
     case 'event':
       return '○'
-    case 'goal':
-      return entry.goalState === 'achieved' ? '◆' : '◇'
   }
-}
-
-function isDropped(entry: EntryView): boolean {
-  return entry.status === 'dropped' || entry.goalState === 'dropped'
 }
 
 function bodyText(entry: EntryView, f: Fmt, ghost: boolean): string {
-  if (isDropped(entry)) {
+  if (entry.status === 'dropped') {
     // No strikethrough without ANSI codes: fall back to ~~text~~
     return f.color ? paint(f, entry.body, 'strike', 'dim') : `~~${entry.body}~~`
   }
-  if (ghost || entry.status === 'completed' || entry.goalState === 'achieved') {
+  if (ghost || entry.status === 'completed') {
     return paint(f, entry.body, 'dim')
   }
   return f.color ? entry.body.replace(/#[a-zA-Z0-9_-]+/g, (tag) => paint(f, tag, 'cyan')) : entry.body
@@ -117,7 +111,7 @@ export interface LineOptions {
   ghost?: boolean
 }
 
-/** One entry: `  ref  [date]  *• [time] text  (notes)` */
+/** One entry: `  ref  [date]  *• [time] text  ⚡done/total  ‹ parent  (notes)` */
 export function entryLine(entry: EntryView, f: Fmt, options: LineOptions = {}): string {
   const ghost = !!options.ghost
   const parts = [`  ${paint(f, entry.ref.padEnd(6), 'dim')}`]
@@ -126,13 +120,15 @@ export function entryLine(entry: EntryView, f: Fmt, options: LineOptions = {}): 
   const star = entry.priority ? paint(f, '*', 'yellow', 'bold') : ' '
   const sign = bullet(entry, ghost)
   const signColor: StyleName | null =
-    ghost || isDropped(entry) ? 'dim'
-    : entry.status === 'completed' || entry.goalState === 'achieved' ? 'green'
-    : entry.status === 'goal' ? 'yellow'
+    ghost || entry.status === 'dropped' ? 'dim'
+    : entry.status === 'completed' ? 'green'
     : null
   let line = `${star}${signColor ? paint(f, sign, signColor) : sign} `
   if (entry.time) line += `${entry.time} `
   line += bodyText(entry, f, ghost)
+  // An epic shows how far along its subtasks are; a subtask names its epic
+  if (entry.subtasks) line += paint(f, `  ⚡${entry.subtasks.done}/${entry.subtasks.total}`, 'yellow')
+  if (entry.parent) line += paint(f, `  ‹ ${entry.parent.text}`, 'dim')
 
   if (ghost) {
     line += paint(f, `  → ${entry.date}`, 'dim')
@@ -199,7 +195,7 @@ export function renderWeek(view: WeekView, f: Fmt): string {
       `${formatDay(view.start)} – ${formatDay(view.end, true)}`,
       view.current && 'this week',
     ),
-    ...section(f, 'Goals', entryLines(view.goals, f), 'no goals — add one with `bujo goal "…"`'),
+    ...section(f, 'This week, no day yet', entryLines(view.undated, f), 'nothing — add with `bujo add "…" --week`'),
   ]
   for (const day of view.days) {
     lines.push('', heading(f, formatDay(day.date), day.isToday && 'today'), ...dayBody(day, f))
@@ -230,8 +226,7 @@ function calendar(view: MonthView, f: Fmt): string[] {
 export function renderMonth(view: MonthView, f: Fmt): string {
   return [
     heading(f, formatMonth(view.month), view.current && 'this month'),
-    ...section(f, 'Goals', entryLines(view.goals, f), 'no goals — add one with `bujo goal "…" --month`'),
-    ...section(f, 'This month, no day yet', entryLines(view.undated, f)),
+    ...section(f, 'This month, no day yet', entryLines(view.undated, f), 'nothing — add with `bujo add "…" --month`'),
     '',
     ...calendar(view, f),
     ...section(f, 'Open tasks', entryLines(view.open, f, { showDate: true }), 'none'),
@@ -285,10 +280,7 @@ export function renderList(title: string, entries: EntryView[], f: Fmt, empty: s
 
 export function renderDetail(detail: EntryDetail, f: Fmt): string {
   const e = detail.entry
-  const state =
-    e.goalState ? `goal (${e.goalState})`
-    : e.open ? `${e.status} (open)`
-    : e.status
+  const state = e.open ? `${e.status} (open)` : e.status
   const rows: [string, string][] = [
     ['id', e.id],
     ['status', state],
@@ -300,7 +292,13 @@ export function renderDetail(detail: EntryDetail, f: Fmt): string {
   rows.push(['created', e.createdAt.replace('T', ' ').slice(0, 16) + ' UTC'])
   rows.push(['moves', String(e.moves)])
   if (e.dateHistory.length > 0) rows.push(['history', [...e.dateHistory, `${e.date} (now)`].join(' → ')])
-  return [entryLine(e, f).trimStart(), ...rows.map(([k, v]) => `  ${paint(f, k.padEnd(9), 'dim')} ${v}`)].join('\n')
+  if (e.parent) rows.push(['parent', `${e.parent.ref}  ${e.parent.text}`])
+  if (e.subtasks) rows.push(['subtasks', `${e.subtasks.done} of ${e.subtasks.total} done`])
+  return [
+    entryLine(e, f).trimStart(),
+    ...rows.map(([k, v]) => `  ${paint(f, k.padEnd(9), 'dim')} ${v}`),
+    ...section(f, 'Subtasks', entryLines(detail.subtasks, f, { showDate: true })),
+  ].join('\n')
 }
 
 export function renderReview(view: ReviewView, f: Fmt): string {
@@ -316,11 +314,9 @@ export function renderReview(view: ReviewView, f: Fmt): string {
     '',
     `  ${plural(c.completed, 'completed', 'completed')} · ${c.open} open · ${c.dropped} dropped · ` +
       `${c.migrated} migrated · ${plural(c.events, 'event')} · ${plural(c.notes, 'note')}`,
-    `  goals: ${c.goals.achieved} achieved · ${c.goals.open} open · ${c.goals.dropped} dropped`,
-    ...section(f, 'Goals', entryLines(view.goals, f), 'none set'),
   ]
-  for (const group of view.monthGoals) {
-    lines.push(...section(f, `Goals for ${formatMonth(group.month)}`, entryLines(group.goals, f)))
+  for (const group of view.monthTasks) {
+    lines.push(...section(f, `${formatMonth(group.month)} as a whole`, entryLines(group.entries, f)))
   }
   lines.push(
     ...section(f, 'Completed', entryLines(view.completed, f, { showDate: true })),

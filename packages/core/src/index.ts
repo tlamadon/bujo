@@ -3,6 +3,7 @@ export * from './tags'
 export * from './ids'
 export * from './dates'
 export * from './errors'
+export * from './family'
 export * from './views'
 export {
   createBujo,

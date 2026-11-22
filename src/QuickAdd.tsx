@@ -38,7 +38,12 @@ export default function QuickAdd({ placeholder, onAdd, onDone }: Props) {
         value={body}
         onChange={(e) => setBody(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Escape') onDone()
+          if (e.key === 'Escape') {
+            // Inside a dialog, Escape would otherwise close the whole panel
+            e.preventDefault()
+            e.stopPropagation()
+            onDone()
+          }
         }}
         enterKeyHint="done"
         autoComplete="off"

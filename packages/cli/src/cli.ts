@@ -3,6 +3,7 @@ import {
   AmbiguousError,
   BujoError,
   InvalidError,
+  carryForwardDate,
   createBujo,
   dateKind,
   dayLog,
@@ -12,11 +13,12 @@ import {
   isClosed,
   isDayDate,
   isOpen,
-  isoWeekKey,
+  loadFamilies,
   monthLog,
   parseDateInput,
   parseMonthInput,
   parseWeekInput,
+  refOf,
   reviewPeriod,
   searchEntries,
   tagCollection,
@@ -268,13 +270,19 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
     return cmd
   }
 
-  const changed = (
+  /** Entries as shown to the outside, with their parent and subtask progress filled in. */
+  const viewsOf = async (s: Session, entries: BujoEntry[]): Promise<EntryView[]> => {
+    const families = await loadFamilies(s.bujo)
+    return entries.map((entry) => toEntryView(entry, families))
+  }
+
+  const changed = async (
     s: Session,
     verb: string,
     entries: BujoEntry[],
     note?: (e: BujoEntry) => string | undefined,
-  ): Output => {
-    const views = entries.map(toEntryView)
+  ): Promise<Output> => {
+    const views = await viewsOf(s, entries)
     return {
       data: { today: s.today, entries: views },
       text: (f) => renderChanges(views.map((entry, i) => ({ verb, entry, note: note?.(entries[i]) })), f),
@@ -298,7 +306,7 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
 
   define(
     'week [week]',
-    'weekly log: goals, then each day (YYYY-Www, +1, -1, next, last; default: this week)',
+    'weekly log: tasks for the week, then each day (YYYY-Www, +1, -1, next, last; default: this week)',
     () => {},
     async (flags, [week]) => {
       const s = open(flags)
@@ -309,7 +317,7 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
 
   define(
     'month [month]',
-    'monthly log: goals, calendar summary, open tasks (YYYY-MM, +1, -1; default: this month)',
+    'monthly log: tasks for the month, calendar summary, open tasks (YYYY-MM, +1, -1; default: this month)',
     () => {},
     async (flags, [month]) => {
       const s = open(flags)
@@ -332,7 +340,7 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
   define(
     'tag <name>',
     'a collection: every entry carrying a #tag',
-    (cmd) => cmd.option('-o, --open', 'only open tasks and goals'),
+    (cmd) => cmd.option('-o, --open', 'only open tasks'),
     async (flags, [name], opts) => {
       const s = open(flags)
       const view = await tagCollection(s.bujo, name, { openOnly: !!opts.open })
@@ -349,7 +357,7 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
   define(
     'search <text...>',
     'find entries by text',
-    (cmd) => cmd.option('-o, --open', 'only open tasks and goals'),
+    (cmd) => cmd.option('-o, --open', 'only open tasks'),
     async (flags, words, opts) => {
       const s = open(flags)
       const query = words.join(' ')
@@ -361,7 +369,7 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
     },
   )
 
-  define('show <ref>', 'full detail of one entry, including its date history', () => {}, async (flags, [ref]) => {
+  define('show <ref>', 'full detail of one entry: date history, parent, subtasks', () => {}, async (flags, [ref]) => {
     const s = open(flags)
     const detail = await entryDetail(s.bujo, await s.bujo.findEntry(ref))
     return { data: { today: s.today, ...detail }, text: (f) => renderDetail(detail, f) }
@@ -374,7 +382,7 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
     async (flags, _args, opts) => {
       const s = open(flags)
       const minMoves = opts.minMoves as number
-      const entries = (await s.bujo.getStaleTasks(minMoves)).map(toEntryView)
+      const entries = await viewsOf(s, await s.bujo.getStaleTasks(minMoves))
       return {
         data: { today: s.today, minMoves, entries },
         text: (f) => renderList(`Stale tasks (moved ${minMoves}+ times)`, entries, f, 'nothing stale'),
@@ -384,7 +392,7 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
 
   define(
     'review <period> [which]',
-    'data for a review of a week or month: counts, goals, done, open, dropped, migrated, stale (read-only)',
+    'data for a review of a week or month: counts, done, open, dropped, migrated, stale (read-only)',
     (cmd) =>
       cmd
         .option('-n, --min-moves <n>', 'how many moves make a task stale', positiveInt('--min-moves'), 3)
@@ -403,27 +411,42 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
 
   // ─── Capture ─────────────────────────────────────────────────────
 
+  /** `--week [w]` / `--month [m]` as a week or month key; undefined when neither was given. */
+  function periodOption(opts: Record<string, unknown>, today: string): string | undefined {
+    if (opts.week !== undefined && opts.month !== undefined) throw new UsageError('Pick a week or a month, not both')
+    const arg = (value: unknown) => (typeof value === 'string' ? value : undefined)
+    if (opts.week !== undefined) return parseWeekInput(arg(opts.week), today)
+    if (opts.month !== undefined) return parseMonthInput(arg(opts.month), today)
+    return undefined
+  }
+
   define(
     'add <text...>',
     'add a task (or --event / --note); #tags in the text become collections',
     (cmd) =>
       cmd
-        .option('-d, --date <date>', 'when: YYYY-MM-DD, today, tomorrow, mon, +3d, next-week, YYYY-MM, unscheduled', 'today')
+        .option('-d, --date <date>', 'when: YYYY-MM-DD, today, tomorrow, mon, +3d, this-week, YYYY-Www, YYYY-MM, unscheduled (default: today)')
+        .option('-w, --week [week]', 'some time in a week instead of on a day: YYYY-Www, next, +1 (default: this week)')
+        .option('-m, --month [month]', 'some time in a month: YYYY-MM, next, +1 (default: this month)')
         .option('-e, --event', 'an event instead of a task')
         .option('-t, --time <HH:MM>', 'time of the event (implies --event)')
         .option('-n, --note', 'a note instead of a task')
-        .option('-p, --priority', 'mark as priority (*)'),
+        .option('-p, --priority', 'mark as priority (*)')
+        .option('--parent <ref>', 'make it a subtask of this task'),
     async (flags, words, opts) => {
       if (opts.note && (opts.event || opts.time)) throw new UsageError('An entry is either a note or an event, not both')
       const s = open(flags)
-      const date = parseDateInput(String(opts.date), s.today)
-      if (dateKind(date) === 'week') throw new InvalidError('Only goals are dated by week — use `bujo goal "…" --week`')
+      const period = periodOption(opts, s.today)
+      if (period !== undefined && opts.date !== undefined) throw new UsageError('Give a --date, a --week or a --month, not several')
+      const date = period ?? parseDateInput(String(opts.date ?? 'today'), s.today)
       const status = opts.note ? 'note' : opts.event || opts.time ? 'event' : 'task'
+      const parent = opts.parent ? await s.bujo.findEntry(String(opts.parent), PREFER_OPEN) : undefined
       const entry = await s.bujo.addEntry(date, status, words.join(' '), {
         priority: !!opts.priority,
         ...(opts.time ? { time: String(opts.time) } : {}),
+        ...(parent ? { parent } : {}),
       })
-      const view = toEntryView(entry)
+      const [view] = await viewsOf(s, [entry])
       return {
         data: { today: s.today, entry: view },
         text: (f) => renderChanges([{ verb: 'added', entry: view, note: view.date === s.today ? undefined : `on ${view.date}` }], f),
@@ -433,29 +456,27 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
 
   define(
     'goal <text...>',
-    'add a goal for a week (default: this week) or a month',
+    'add a task for a week as a whole (default: this week) or a month — short for `add --week` / `add --month`',
     (cmd) =>
       cmd
         .option('-w, --week [week]', 'YYYY-Www, next, +1 (default: this week)')
         .option('-m, --month [month]', 'YYYY-MM, next, +1 (default: this month)')
         .option('-p, --priority', 'mark as priority (*)'),
     async (flags, words, opts) => {
-      if (opts.week !== undefined && opts.month !== undefined) throw new UsageError('A goal is for a week or a month, not both')
       const s = open(flags)
-      const arg = (value: unknown) => (typeof value === 'string' ? value : undefined)
-      const period =
-        opts.month !== undefined ? parseMonthInput(arg(opts.month), s.today) : parseWeekInput(arg(opts.week), s.today)
-      const view = toEntryView(await s.bujo.addGoal(period, words.join(' '), { priority: !!opts.priority }))
+      const period = periodOption(opts, s.today) ?? parseWeekInput(undefined, s.today)
+      const entry = await s.bujo.addEntry(period, 'task', words.join(' '), { priority: !!opts.priority })
+      const [view] = await viewsOf(s, [entry])
       return {
         data: { today: s.today, entry: view },
-        text: (f) => renderChanges([{ verb: 'added', entry: view, note: `goal for ${period}` }], f),
+        text: (f) => renderChanges([{ verb: 'added', entry: view, note: `for ${period}` }], f),
       }
     },
   )
 
   // ─── Changing entries ────────────────────────────────────────────
 
-  define('done <ref...>', 'mark entries done (a goal: achieved)', () => {}, async (flags, refs) => {
+  define('done <ref...>', 'mark entries done', () => {}, async (flags, refs) => {
     const s = open(flags)
     const entries = unique(await s.bujo.findEntries(refs, PREFER_OPEN))
     const results: BujoEntry[] = []
@@ -484,22 +505,14 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
     const entries = unique(await s.bujo.findEntries(refs, PREFER_CLOSED))
     const results: BujoEntry[] = []
     for (const entry of entries) results.push(await s.bujo.reopenEntry(entry))
-    return changed(s, 'reopened', results, (e) => (isClosed(e) ? undefined : `now ${e.status === 'goal' ? 'an open goal' : `a ${e.status}`}`))
+    return changed(s, 'reopened', results, (e) => (isClosed(e) ? undefined : `now ${e.status === 'event' ? 'an' : 'a'} ${e.status}`))
   })
 
-  /** Where a goal can go: a week or month. A day means "the week of that day". */
-  function goalPeriod(input: string, today: string): string {
-    const date = parseDateInput(input, today)
-    if (isDayDate(date)) return isoWeekKey(date)
-    if (dateKind(date) === 'unscheduled') throw new InvalidError('A goal belongs to a week or a month; it cannot be unscheduled')
-    return date
-  }
-
-  async function move(s: Session, ref: string, target: (entry: BujoEntry) => string): Promise<Output> {
+  async function move(s: Session, ref: string, target: string): Promise<Output> {
     const entry = await s.bujo.findEntry(ref, PREFER_OPEN)
     const from = displayDate(entry.date)
-    const moved = await s.bujo.rescheduleEntry(entry, target(entry))
-    const view = toEntryView(moved)
+    const moved = await s.bujo.rescheduleEntry(entry, target)
+    const [view] = await viewsOf(s, [moved])
     return {
       data: { today: s.today, from, entry: view },
       text: (f) =>
@@ -509,13 +522,11 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
 
   define(
     'move <ref> <date>',
-    'reschedule an entry (leaves a ghost on the old day, records the move)',
+    'reschedule an entry to a day, a week (this-week, YYYY-Www), a month or unscheduled; records the move',
     () => {},
     async (flags, [ref, date]) => {
       const s = open(flags)
-      return move(s, ref, (entry) =>
-        entry.status === 'goal' ? goalPeriod(date, s.today) : parseDateInput(date, s.today),
-      )
+      return move(s, ref, parseDateInput(date, s.today))
     },
   )
 
@@ -525,17 +536,30 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
     () => {},
     async (flags, [ref, when]) => {
       const s = open(flags)
-      return move(s, ref, (entry) => {
-        if (entry.status === 'goal') return goalPeriod(when, s.today)
-        const date = parseDateInput(when, s.today)
-        const kind = dateKind(date)
-        if (kind !== 'month' && kind !== 'unscheduled') {
-          throw new InvalidError(
-            `schedule takes a month (YYYY-MM, next-month) or \`unscheduled\`; for a specific day use \`bujo move ${ref} ${when}\``,
-          )
-        }
-        return date
-      })
+      const date = parseDateInput(when, s.today)
+      const kind = dateKind(date)
+      if (kind !== 'month' && kind !== 'unscheduled') {
+        throw new InvalidError(
+          `schedule takes a month (YYYY-MM, next-month) or \`unscheduled\`; for a day or a week use \`bujo move ${ref} ${when}\``,
+        )
+      }
+      return move(s, ref, date)
+    },
+  )
+
+  define(
+    'parent <ref> <parent>',
+    'make an entry a subtask of a task (which becomes an epic); `none` as <parent> detaches it',
+    () => {},
+    async (flags, [ref, parentRef]) => {
+      const s = open(flags)
+      const entry = await s.bujo.findEntry(ref, PREFER_OPEN)
+      const detach = ['none', 'null', '-'].includes(parentRef.toLowerCase())
+      const parent = detach ? null : await s.bujo.findEntry(parentRef, PREFER_OPEN)
+      const updated = await s.bujo.setParent(entry, parent)
+      return changed(s, detach ? 'detached' : 'subtask', [updated], () =>
+        parent ? `of ${refOf(parent._id)}` : undefined,
+      )
     },
   )
 
@@ -558,11 +582,11 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
     },
   )
 
-  define('rm <ref...>', 'delete entries for good (and their ghosts)', () => {}, async (flags, refs) => {
+  define('rm <ref...>', 'delete entries for good (and their ghosts); subtasks of a deleted task are kept', () => {}, async (flags, refs) => {
     const s = open(flags)
     // Deleting is not the place for guessing: no preference between matches
     const entries = unique(await s.bujo.findEntries(refs))
-    const views = entries.map(toEntryView)
+    const views = await viewsOf(s, entries)
     const listing = views.map((v) => entryLine(v, { color: false, today: s.today })).join('\n')
     await confirmOrRefuse(
       flags,
@@ -580,13 +604,13 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
 
   define(
     'migrate',
-    'move open tasks left on earlier days to today (like the app)',
+    'carry open tasks forward: from earlier days to today, from earlier weeks and months to the current one',
     (cmd) => cmd.option('--dry-run', 'only list what would move'),
     async (flags, _args, opts) => {
       const s = open(flags)
       const dryRun = !!opts.dryRun
       const entries = dryRun ? await s.bujo.getOverdueTasks(s.today) : await s.bujo.migrateOpenTasks(s.today)
-      const views = entries.map(toEntryView)
+      const views = await viewsOf(s, entries)
       return {
         data: { today: s.today, dryRun, count: views.length, entries: views },
         text: (f) =>
@@ -596,7 +620,9 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
                 views.map((entry) => ({
                   verb: dryRun ? 'would move' : 'migrated',
                   entry,
-                  note: dryRun ? `${entry.date} → ${s.today}` : `from ${entry.dateHistory[entry.dateHistory.length - 1]}`,
+                  note: dryRun
+                    ? `${entry.date} → ${carryForwardDate(entry.date, s.today)}`
+                    : `from ${entry.dateHistory[entry.dateHistory.length - 1]}`,
                 })),
                 f,
               ),
@@ -750,7 +776,7 @@ Configuration: ~/.config/bujo/config.json or BUJO_URL, BUJO_USER, … — see \`
       return fail('usage', `${err.message.replace(/^error: /, '')} — see \`bujo --help\``, EXIT_ERROR)
     }
     if (err instanceof AmbiguousError) {
-      return fail('ambiguous', err.message, EXIT_NO_MATCH, err.candidates.map(toEntryView))
+      return fail('ambiguous', err.message, EXIT_NO_MATCH, err.candidates.map((entry) => toEntryView(entry)))
     }
     if (err instanceof BujoError) {
       return fail(err.code, err.message, err.code === 'not_found' ? EXIT_NO_MATCH : EXIT_ERROR)

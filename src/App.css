@@ -593,8 +593,7 @@
 
 /* States */
 .entry.status-completed .body-text,
-.entry.status-dropped .body-text,
-.entry.goal-dropped .body-text {
+.entry.status-dropped .body-text {
   text-decoration: line-through;
   color: var(--text-muted);
 }
@@ -604,24 +603,14 @@
   color: var(--text-muted);
 }
 
-.entry.goal-achieved .body-text {
-  color: var(--text-muted);
-}
-
 .entry.status-completed .tag-pills,
-.entry.status-dropped .tag-pills,
-.entry.goal-dropped .tag-pills {
+.entry.status-dropped .tag-pills {
   opacity: 0.6;
 }
 
-.entry.status-dropped .signifier-box,
-.entry.goal-dropped .signifier-box {
+.entry.status-dropped .signifier-box {
   color: var(--text-faint);
   border-style: dashed;
-}
-
-.entry.status-goal .signifier-box {
-  color: var(--priority);
 }
 
 /* Ghost entries (rescheduled away) */
@@ -667,6 +656,90 @@
   line-height: 1.35;
   font-size: 0.8rem;
   white-space: nowrap;
+}
+
+/* ─── Epics and subtasks ───────────────────────────── */
+/* On an epic: a lightning bolt and how many of its subtasks are done */
+.epic-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin-left: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--priority);
+  white-space: nowrap;
+  vertical-align: 0.05em;
+}
+
+.sheet-header .epic-badge {
+  margin-left: 0;
+}
+
+/* On a subtask: the epic it belongs to. Opens that epic. */
+.parent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  max-width: 14rem;
+  margin-left: 0.4rem;
+  padding: 0.1rem 0.5rem;
+  background: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  vertical-align: 0.08em;
+}
+
+.parent-chip svg {
+  flex: none;
+  color: var(--priority);
+}
+
+.parent-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parent-chip:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.subtask-list {
+  margin-bottom: 0.5rem;
+}
+
+.subtask-open {
+  padding: 0;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.subtask-open:hover {
+  text-decoration: underline;
+}
+
+.task-detail-parent {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.task-detail-parent select {
+  flex: 1;
+  min-width: 0;
+  height: var(--tap);
+  padding: 0 0.5rem;
+  font-size: 1rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
 }
 
 /* ─── Tags ─────────────────────────────────────────── */
@@ -773,8 +846,8 @@ button.tag-pill:hover {
   margin: 0.15rem 0 0.5rem;
 }
 
-/* ─── Cards: goals, week days ───────────────────────── */
-.goals-section,
+/* ─── Cards: a week's or month's own tasks, week days ── */
+.period-section,
 .week-day {
   min-width: 0;
   padding: 0 0.75rem 0.4rem;
@@ -783,7 +856,7 @@ button.tag-pill:hover {
   border-radius: 10px;
 }
 
-.goals-section {
+.period-section {
   margin-bottom: 0.75rem;
 }
 
@@ -806,7 +879,7 @@ button.tag-pill:hover {
   color: var(--text-faint);
 }
 
-.goals-section .entry-list,
+.period-section .entry-list,
 .week-day .entry-list {
   margin: 0;
 }
@@ -1442,7 +1515,8 @@ kbd {
 
 /* ─── Touch: the remaining small controls get a finger-sized target ───── */
 @media (pointer: coarse) {
-  button.tag-pill {
+  button.tag-pill,
+  .parent-chip {
     padding-top: 0.25rem;
     padding-bottom: 0.25rem;
   }
@@ -1664,26 +1738,26 @@ kbd {
     width: 100%;
   }
 
-  .weekly-log .goals-section {
+  .weekly-log .period-section {
     max-width: 45rem;
     margin-left: auto;
     margin-right: auto;
   }
 
-  /* The month as a real calendar, with goals and the task list beside it */
+  /* The month as a real calendar, with its own tasks and the task list beside it */
   .month-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 24rem;
     grid-template-areas:
-      'calendar goals'
+      'calendar period'
       'calendar list';
     grid-template-rows: auto 1fr;
     column-gap: 1.5rem;
     align-items: start;
   }
 
-  .month-goals {
-    grid-area: goals;
+  .month-period {
+    grid-area: period;
   }
 
   .month-calendar {

@@ -8,15 +8,18 @@ import {
   dateKind,
   isDayDate,
   isMonthKey,
+  isWeekKey,
   isoWeekKey,
   monthDays,
   monthKey,
   periodRange,
   weekDays,
+  weekStart,
   weekdayOf,
   type DateKind,
 } from './dates'
 import { InvalidError } from './errors'
+import { NO_FAMILIES, familyIndex, type FamilyIndex, type Progress } from './family'
 import { refOf } from './ids'
 import { isClosed, isOpen, movesOf, type Bujo } from './store'
 import { stripTags } from './tags'
@@ -39,12 +42,14 @@ export interface EntryView {
   text: string
   tags: string[]
   priority: boolean
-  /** Still to do: an open task or an open goal */
+  /** Still to do: an open task */
   open: boolean
   /** `HH:MM` for timed events, otherwise null */
   time: string | null
-  /** Goals: `open`, `achieved` or `dropped`. Null for everything else */
-  goalState: 'open' | 'achieved' | 'dropped' | null
+  /** The entry this one is a subtask of, or null */
+  parent: { ref: string; text: string } | null
+  /** For an epic (an entry with subtasks): how far along it is. Null for everything else */
+  subtasks: Progress | null
   /** Dates the entry was on before, oldest first */
   dateHistory: string[]
   /** Number of times the entry was rescheduled (`dateHistory.length`) */
@@ -64,7 +69,17 @@ export function displayDate(date: string): string {
   return date === UNSCHEDULED ? 'unscheduled' : date
 }
 
-export function toEntryView(entry: BujoEntry): EntryView {
+/** Parent/subtask links across the whole journal, for filling in `parent` and `subtasks`. */
+export async function loadFamilies(bujo: Bujo): Promise<FamilyIndex> {
+  return familyIndex(await bujo.getAllEntries())
+}
+
+/**
+ * An entry as shown to the outside. Without `families` the entry is described
+ * on its own: `parent` and `subtasks` are then null whatever the links are.
+ */
+export function toEntryView(entry: BujoEntry, families: FamilyIndex = NO_FAMILIES): EntryView {
+  const parent = families.parentOf(entry)
   return {
     ref: refOf(entry._id),
     id: entry._id,
@@ -77,22 +92,21 @@ export function toEntryView(entry: BujoEntry): EntryView {
     priority: !!entry.priority,
     open: isOpen(entry),
     time: entry.status === 'event' && entry.time ? entry.time : null,
-    goalState: entry.status === 'goal' ? (entry.goalState ?? 'open') : null,
+    parent: parent ? { ref: refOf(parent._id), text: stripTags(parent.body) } : null,
+    subtasks: families.progressOf(entry),
     dateHistory: (entry.dateHistory ?? []).map(displayDate),
     moves: movesOf(entry),
     createdAt: new Date(entry.createdAt).toISOString(),
   }
 }
 
-function toGhostView(display: DisplayEntry): GhostView {
-  return { ...toEntryView(display.entry), ghostDate: display.ghostDoc?.date ?? display.entry.date }
+function toGhostView(display: DisplayEntry, families: FamilyIndex): GhostView {
+  return { ...toEntryView(display.entry, families), ghostDate: display.ghostDoc?.date ?? display.entry.date }
 }
 
 /** Reading order within a day: what needs doing first, what is settled last. */
 function dayRank(entry: BujoEntry): number {
   switch (entry.status) {
-    case 'goal':
-      return entry.goalState ? 1 : 0
     case 'task':
       return entry.priority ? 2 : 3
     case 'event':
@@ -123,14 +137,31 @@ function compareInDay(a: BujoEntry, b: BujoEntry): number {
   return a.createdAt - b.createdAt
 }
 
+/**
+ * Where a date falls on the calendar, as a sortable string: a month comes
+ * before its days, a week just before its Monday, no date after everything.
+ */
+function calendarKey(date: string): string {
+  switch (dateKind(date)) {
+    case 'month':
+      return `${date}-00`
+    case 'week':
+      return `${weekStart(date)} `
+    case 'day':
+      return `${date}!`
+    default:
+      return '~'
+  }
+}
+
 /** Chronological: by date, then by reading order within the date. */
 function compareByDate(a: BujoEntry, b: BujoEntry): number {
-  if (a.date !== b.date) return a.date < b.date ? -1 : 1
+  if (a.date !== b.date) return calendarKey(a.date) < calendarKey(b.date) ? -1 : 1
   return compareInDay(a, b)
 }
 
-function sortedViews(entries: BujoEntry[], compare = compareInDay): EntryView[] {
-  return [...entries].sort(compare).map(toEntryView)
+function sortedViews(entries: BujoEntry[], families: FamilyIndex, compare = compareInDay): EntryView[] {
+  return [...entries].sort(compare).map((entry) => toEntryView(entry, families))
 }
 
 const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -155,35 +186,35 @@ export interface DayView {
 export interface TodayView extends DayView {
   week: string
   /**
-   * Open tasks left on earlier days (and in earlier months of the future
-   * log). Only filled when `date` is today; `migrate` moves them here.
+   * Open tasks left behind on earlier days, in earlier weeks and in earlier
+   * months. Only filled when `date` is today; `migrate` carries them forward.
    */
   overdue: EntryView[]
 }
 
-function toDayView(date: string, today: string, displays: DisplayEntry[]): DayView {
+function toDayView(date: string, today: string, displays: DisplayEntry[], families: FamilyIndex): DayView {
   const here = displays.filter((d) => (d.isGhost ? d.ghostDoc?.date === date : d.entry.date === date))
   return {
     date,
     weekday: weekdayName(date),
     isToday: date === today,
-    entries: sortedViews(here.filter((d) => !d.isGhost).map((d) => d.entry)),
+    entries: sortedViews(here.filter((d) => !d.isGhost).map((d) => d.entry), families),
     ghosts: here
       .filter((d) => d.isGhost)
       .sort((a, b) => a.entry.createdAt - b.entry.createdAt)
-      .map(toGhostView),
+      .map((d) => toGhostView(d, families)),
   }
 }
 
 /** The daily log for `date`. */
 export async function dayLog(bujo: Bujo, date: string, today: string): Promise<TodayView> {
   if (!isDayDate(date)) throw new InvalidError(`"${date}" is not a day (YYYY-MM-DD)`)
-  const displays = await bujo.getEntriesForDate(date)
+  const [displays, families] = await Promise.all([bujo.getEntriesForDate(date), loadFamilies(bujo)])
   const overdue = date === today ? await bujo.getOverdueTasks(today) : []
   return {
-    ...toDayView(date, today, displays),
+    ...toDayView(date, today, displays, families),
     week: isoWeekKey(date),
-    overdue: overdue.map(toEntryView),
+    overdue: overdue.map((entry) => toEntryView(entry, families)),
   }
 }
 
@@ -198,24 +229,26 @@ export interface WeekView {
   end: string
   /** Whether today falls in this week */
   current: boolean
-  goals: EntryView[]
+  /** Entries for the week as a whole, with no day yet */
+  undated: EntryView[]
   /** Monday to Sunday */
   days: DayView[]
 }
 
 export async function weekLog(bujo: Bujo, week: string, today: string): Promise<WeekView> {
   const days = weekDays(week)
-  const [goals, displays] = await Promise.all([
-    bujo.getGoals(week),
+  const [undated, displays, families] = await Promise.all([
+    bujo.getEntriesForPeriod(week),
     bujo.getEntriesForDateRange(days[0], days[6]),
+    loadFamilies(bujo),
   ])
   return {
     week,
     start: days[0],
     end: days[6],
     current: isoWeekKey(today) === week,
-    goals: sortedViews(goals),
-    days: days.map((day) => toDayView(day, today, displays)),
+    undated: sortedViews(undated, families),
+    days: days.map((day) => toDayView(day, today, displays, families)),
   }
 }
 
@@ -240,8 +273,7 @@ export interface MonthView {
   end: string
   /** Whether today falls in this month */
   current: boolean
-  goals: EntryView[]
-  /** Future log items for this month that have no day yet */
+  /** Entries for the month as a whole, with no day yet */
   undated: EntryView[]
   /** Calendar summary: every day of the month with its counts */
   days: { date: string; weekday: string; isToday: boolean; counts: DayCounts }[]
@@ -271,9 +303,10 @@ function countDay(date: string, displays: DisplayEntry[]): DayCounts {
 
 export async function monthLog(bujo: Bujo, month: string, today: string): Promise<MonthView> {
   const days = monthDays(month)
-  const [periodEntries, displays] = await Promise.all([
+  const [periodEntries, displays, families] = await Promise.all([
     bujo.getEntriesForPeriod(month),
     bujo.getEntriesForDateRange(days[0], days[days.length - 1]),
+    loadFamilies(bujo),
   ])
   const dated = displays.filter((d) => !d.isGhost).map((d) => d.entry)
   return {
@@ -281,16 +314,15 @@ export async function monthLog(bujo: Bujo, month: string, today: string): Promis
     start: days[0],
     end: days[days.length - 1],
     current: monthKey(today) === month,
-    goals: sortedViews(periodEntries.filter((e) => e.status === 'goal')),
-    undated: sortedViews(periodEntries.filter((e) => e.status !== 'goal')),
+    undated: sortedViews(periodEntries, families),
     days: days.map((date) => ({
       date,
       weekday: weekdayName(date),
       isToday: date === today,
       counts: countDay(date, displays),
     })),
-    open: sortedViews(dated.filter((e) => e.status === 'task'), compareByDate),
-    events: sortedViews(dated.filter((e) => e.status === 'event'), compareByDate),
+    open: sortedViews(dated.filter((e) => e.status === 'task'), families, compareByDate),
+    events: sortedViews(dated.filter((e) => e.status === 'event'), families, compareByDate),
   }
 }
 
@@ -301,8 +333,9 @@ export interface FutureView {
   /** Entries with no date at all */
   unscheduled: EntryView[]
   /**
-   * What lies ahead, by month: entries on days after today, and future log
-   * items dated to this month or a later one. Month-level items come first.
+   * What lies ahead, by month: entries on days after today, in weeks after
+   * this one (under the month their Monday falls in), and dated to this month
+   * or a later one. Month-level items come first.
    */
   months: { month: string; entries: EntryView[] }[]
 }
@@ -314,13 +347,16 @@ export interface FutureOptions {
 
 export async function futureLog(bujo: Bujo, today: string, options: FutureOptions = {}): Promise<FutureView> {
   const all = await bujo.getAllEntries()
-  const wanted = all.filter((e) => e.status !== 'goal' && (options.includeClosed || !isClosed(e)))
+  const families = familyIndex(all)
+  const wanted = all.filter((e) => options.includeClosed || !isClosed(e))
   const thisMonth = monthKey(today)
+  const thisWeek = isoWeekKey(today)
 
   const byMonth = new Map<string, BujoEntry[]>()
   for (const entry of wanted) {
     let month: string | null = null
     if (isDayDate(entry.date) && entry.date > today) month = monthKey(entry.date)
+    else if (isWeekKey(entry.date) && entry.date > thisWeek) month = monthKey(weekStart(entry.date))
     else if (isMonthKey(entry.date) && entry.date >= thisMonth) month = entry.date
     if (month) byMonth.set(month, [...(byMonth.get(month) ?? []), entry])
   }
@@ -334,10 +370,10 @@ export async function futureLog(bujo: Bujo, today: string, options: FutureOption
   }
   return {
     today,
-    unscheduled: sortedViews(wanted.filter((e) => e.date === UNSCHEDULED)),
+    unscheduled: sortedViews(wanted.filter((e) => e.date === UNSCHEDULED), families),
     months: [...byMonth.keys()].sort().map((month) => ({
       month,
-      entries: sortedViews(byMonth.get(month) ?? [], inMonth),
+      entries: sortedViews(byMonth.get(month) ?? [], families, inMonth),
     })),
   }
 }
@@ -365,7 +401,7 @@ export function normalizeTag(name: string): string {
 
 export async function tagCollection(bujo: Bujo, name: string, options: { openOnly?: boolean } = {}): Promise<TagView> {
   const tag = normalizeTag(name)
-  const [entries, doc] = await Promise.all([bujo.getEntriesForTag(tag), bujo.getTag(tag)])
+  const [entries, doc, families] = await Promise.all([bujo.getEntriesForTag(tag), bujo.getTag(tag), loadFamilies(bujo)])
   const open = entries.filter(isOpen).sort(compareByDate)
   const rest = entries.filter((e) => !isOpen(e)).sort((a, b) => compareByDate(b, a))
   return {
@@ -373,7 +409,7 @@ export async function tagCollection(bujo: Bujo, name: string, options: { openOnl
     color: doc?.color ?? null,
     open: open.length,
     total: entries.length,
-    entries: [...open, ...(options.openOnly ? [] : rest)].map(toEntryView),
+    entries: [...open, ...(options.openOnly ? [] : rest)].map((entry) => toEntryView(entry, families)),
   }
 }
 
@@ -403,22 +439,26 @@ export async function searchEntries(bujo: Bujo, text: string, options: SearchOpt
   const needle = text.trim().toLowerCase()
   if (!needle) throw new InvalidError('Empty search text')
   const all = await bujo.getAllEntries()
+  const families = familyIndex(all)
   return all
     .filter((e) => e.body.toLowerCase().includes(needle) && (!options.openOnly || isOpen(e)))
     .sort((a, b) => compareByDate(b, a))
-    .map(toEntryView)
+    .map((entry) => toEntryView(entry, families))
 }
 
 export interface EntryDetail {
   entry: EntryView
+  /** Its subtasks, oldest first (empty unless the entry is an epic) */
+  subtasks: EntryView[]
   /** Days on which the entry has left a ghost (it shows as moved there) */
   ghostDates: string[]
 }
 
 export async function entryDetail(bujo: Bujo, entry: BujoEntry): Promise<EntryDetail> {
-  const ghosts = await bujo.getGhostsOf(entry._id)
+  const [ghosts, families] = await Promise.all([bujo.getGhostsOf(entry._id), loadFamilies(bujo)])
   return {
-    entry: toEntryView(entry),
+    entry: toEntryView(entry, families),
+    subtasks: families.childrenOf(entry).map((child) => toEntryView(child, families)),
     ghostDates: ghosts.map((g) => g.date).filter((d) => d !== entry.date).sort(),
   }
 }
@@ -437,21 +477,21 @@ export interface ReviewView {
     completed: number
     open: number
     dropped: number
-    /** Entries carried out of the period: they were on one of its days and now live elsewhere */
+    /** Entries carried out of the period: they were in it and now live elsewhere */
     migrated: number
     events: number
     notes: number
-    goals: { open: number; achieved: number; dropped: number }
   }
-  /** The period's goals, each with its `goalState` */
-  goals: EntryView[]
-  /** For a weekly review: the goals of the month(s) the week touches */
-  monthGoals: { month: string; goals: EntryView[] }[]
+  /**
+   * For a weekly review: what the month(s) the week touches hold for the month
+   * as a whole — the larger aims the week sits under.
+   */
+  monthTasks: { month: string; entries: EntryView[] }[]
   completed: EntryView[]
   /** Open tasks still dated inside the period */
   open: EntryView[]
   dropped: EntryView[]
-  /** Carried out of the period; `ghostDate` is the last day in the period they were on */
+  /** Carried out of the period; `ghostDate` is where in the period they last were */
   migrated: GhostView[]
   /** Open tasks anywhere that have been moved `staleMinMoves`+ times: drop or do? */
   stale: EntryView[]
@@ -466,8 +506,10 @@ export interface ReviewOptions {
 /**
  * Everything needed to review a week or a month. Read-only.
  *
+ * The period's entries are those on one of its days, those dated to the
+ * period as a whole and, for a month, those dated to a week starting in it.
  * Counts go by where entries are dated: a task counts as completed in the
- * period it was completed *on* (tasks migrate forward until done).
+ * period it was completed *in* (tasks migrate forward until done).
  */
 export async function reviewPeriod(
   bujo: Bujo,
@@ -483,31 +525,43 @@ export async function reviewPeriod(
   const minMoves = options.minMoves ?? 3
   const months = kind === 'week' ? [...new Set([monthKey(start), monthKey(end)])] : []
 
-  const [periodEntries, displays, stale, ...monthGoalLists] = await Promise.all([
+  const [periodEntries, displays, stale, all, ...monthLists] = await Promise.all([
     bujo.getEntriesForPeriod(period),
     bujo.getEntriesForDateRange(start, end),
     bujo.getStaleTasks(minMoves),
-    ...months.map((m) => bujo.getGoals(m)),
+    bujo.getAllEntries(),
+    ...months.map((m) => bujo.getEntriesForPeriod(m)),
   ])
+  const families = familyIndex(all)
 
-  const goals = periodEntries.filter((e) => e.status === 'goal')
-  // Entries of the period: on one of its days, or (months) dated to the month itself
+  const within = (day: string) => day >= start && day <= end
+  const inPeriod = (date: string) =>
+    date === period ||
+    (isDayDate(date) && within(date)) ||
+    // A week belongs to the month its Monday falls in
+    (kind === 'month' && isWeekKey(date) && within(weekStart(date)))
+
   const entries = [
-    ...periodEntries.filter((e) => e.status !== 'goal'),
+    ...periodEntries,
+    ...(kind === 'month' ? all.filter((e) => isWeekKey(e.date) && inPeriod(e.date)) : []),
     ...displays.filter((d) => !d.isGhost).map((d) => d.entry),
   ]
   const withStatus = (status: BujoStatus) => entries.filter((e) => e.status === status)
 
-  // Carried out: has a ghost inside the period and is now dated outside it
+  // Carried out: was in the period, is now dated outside it. A day keeps a
+  // ghost of what left it; the period itself only shows in the date history.
   const carried = new Map<string, DisplayEntry>()
   for (const d of displays) {
-    if (!d.isGhost) continue
-    const now = d.entry.date
-    if (now === period || (isDayDate(now) && now >= start && now <= end)) continue
+    if (!d.isGhost || inPeriod(d.entry.date)) continue
     const seen = carried.get(d.entry._id)
     if (!seen || (seen.ghostDoc?.date ?? '') < (d.ghostDoc?.date ?? '')) carried.set(d.entry._id, d)
   }
-  const migrated = [...carried.values()].sort((a, b) => compareByDate(a.entry, b.entry)).map(toGhostView)
+  const migrated = [...carried.values()].map((d) => toGhostView(d, families))
+  for (const entry of all) {
+    if (carried.has(entry._id) || inPeriod(entry.date) || !entry.dateHistory?.includes(period)) continue
+    migrated.push({ ...toEntryView(entry, families), ghostDate: period })
+  }
+  migrated.sort((a, b) => (a.date === b.date ? 0 : calendarKey(a.date) < calendarKey(b.date) ? -1 : 1))
 
   return {
     kind,
@@ -522,19 +576,13 @@ export async function reviewPeriod(
       migrated: migrated.length,
       events: withStatus('event').length,
       notes: withStatus('note').length,
-      goals: {
-        open: goals.filter((g) => !g.goalState).length,
-        achieved: goals.filter((g) => g.goalState === 'achieved').length,
-        dropped: goals.filter((g) => g.goalState === 'dropped').length,
-      },
     },
-    goals: sortedViews(goals),
-    monthGoals: months.map((month, i) => ({ month, goals: sortedViews(monthGoalLists[i]) })),
-    completed: sortedViews(withStatus('completed'), compareByDate),
-    open: sortedViews(withStatus('task'), compareByDate),
-    dropped: sortedViews(withStatus('dropped'), compareByDate),
+    monthTasks: months.map((month, i) => ({ month, entries: sortedViews(monthLists[i], families) })),
+    completed: sortedViews(withStatus('completed'), families, compareByDate),
+    open: sortedViews(withStatus('task'), families, compareByDate),
+    dropped: sortedViews(withStatus('dropped'), families, compareByDate),
     migrated,
-    stale: stale.map(toEntryView),
+    stale: stale.map((entry) => toEntryView(entry, families)),
     staleMinMoves: minMoves,
   }
 }

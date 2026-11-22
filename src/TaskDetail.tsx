@@ -1,33 +1,44 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   addDays,
+  addEntry,
+  addMonths,
+  addWeeks,
+  idTail,
   isScheduledDate,
+  isTaskLike,
+  isoWeekKey,
+  monthKey,
   parseTags,
   refOf,
+  setParent,
+  stripTags,
   updateEntry,
   type BujoEntry,
   type BujoStatus,
   type EntryChanges,
-  type GoalState,
 } from './db'
-import { deleteWithUndo, rescheduleWithUndo } from './entryActions'
-import { formatDateValue, formatTimestamp } from './format'
-import { Close } from './Icons'
-import { STATUS_ICONS } from './statusMeta'
+import { deleteWithUndo, rescheduleWithUndo, toggleEntryDone } from './entryActions'
+import { formatDateCompact, formatDateValue, formatTimestamp } from './format'
+import { useAllEntries } from './hooks'
+import { Bolt, Close } from './Icons'
+import QuickAdd from './QuickAdd'
+import { STATUS_ICONS, entryClass, entryIcon } from './statusMeta'
 import TagPills from './TagPills'
 
 const SELECTABLE_STATUSES: BujoStatus[] = ['task', 'completed', 'dropped', 'note', 'event']
 
-const GOAL_STATES: { value: GoalState | null; icon: string; label: string }[] = [
-  { value: null, icon: '◇', label: 'open' },
-  { value: 'achieved', icon: '◆', label: 'achieved' },
-  { value: 'dropped', icon: '◇', label: 'dropped' },
-]
+/** How many tasks the "Part of" list offers before it stops being a list one can read */
+const MAX_PARENT_CHOICES = 60
+
+const textOf = (entry: BujoEntry) => stripTags(entry.body) || entry.body
 
 interface Props {
   entry: BujoEntry
   today: string
   onClose: () => void
+  /** Show another entry in the panel instead (a subtask, or the epic above) */
+  onOpenEntry: (entry: BujoEntry) => void
 }
 
 /**
@@ -35,20 +46,46 @@ interface Props {
  * bottom on a phone, a panel on the right on a wide screen. A native
  * <dialog> brings the focus trap, Escape and the inert page behind for free.
  */
-export default function TaskDetail({ entry, today, onClose }: Props) {
-  const isGoal = entry.status === 'goal'
+export default function TaskDetail({ entry, today, onClose, onOpenEntry }: Props) {
   const [body, setBody] = useState(entry.body)
   const [status, setStatus] = useState(entry.status)
-  const [goalState, setGoalState] = useState<GoalState | null>(entry.goalState ?? null)
   const [priority, setPriority] = useState(!!entry.priority)
   const [time, setTime] = useState(entry.time ?? '')
+  const [parentTail, setParentTail] = useState(entry.parent ?? '')
   const [rescheduleDate, setRescheduleDate] = useState('')
   const [showReschedule, setShowReschedule] = useState(false)
+  const [addingSubtask, setAddingSubtask] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const dialogRef = useRef<HTMLDialogElement>(null)
   const bodyRef = useRef<HTMLTextAreaElement>(null)
   const pressedBackdrop = useRef(false)
+
+  // Subtasks and the epic above live on other days: look across the journal.
+  const allEntries = useAllEntries()
+  const tail = idTail(entry._id)
+  const subtasks = useMemo(
+    () => (allEntries ?? []).filter((e) => e.parent === tail).sort((a, b) => a.createdAt - b.createdAt),
+    [allEntries, tail],
+  )
+  const parent = useMemo(
+    () => allEntries?.find((e) => idTail(e._id) === entry.parent),
+    [allEntries, entry.parent],
+  )
+  // What this entry could be a subtask of: tasks that are not subtasks
+  // themselves. Epics first, then the most recent.
+  const parentChoices = useMemo(() => {
+    const isEpic = new Set((allEntries ?? []).map((e) => e.parent).filter(Boolean))
+    return (allEntries ?? [])
+      .filter((e) => isTaskLike(e) && !e.parent && idTail(e._id) !== tail)
+      .filter((e) => e.status === 'task' || idTail(e._id) === entry.parent)
+      .sort((a, b) => Number(isEpic.has(idTail(b._id))) - Number(isEpic.has(idTail(a._id))) || b.createdAt - a.createdAt)
+      .slice(0, MAX_PARENT_CHOICES)
+  }, [allEntries, tail, entry.parent])
+
+  // One level only: an epic cannot become a subtask, a subtask cannot hold any.
+  const canHaveParent = subtasks.length === 0
+  const canHaveSubtasks = isTaskLike(entry) && !entry.parent && !parentTail
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -78,11 +115,15 @@ export default function TaskDetail({ entry, today, onClose }: Props) {
     if (trimmed !== entry.body) changes.body = trimmed
     if (status !== entry.status) changes.status = status
     if (priority !== !!entry.priority) changes.priority = priority
-    if (isGoal && goalState !== (entry.goalState ?? null)) changes.goalState = goalState
     // A time only means something on an event
     if (status === 'event' && time !== (entry.time ?? '')) changes.time = time || null
     return act(async () => {
-      if (Object.keys(changes).length > 0) await updateEntry(entry, changes)
+      let current = entry
+      if (Object.keys(changes).length > 0) current = await updateEntry(current, changes)
+      if (parentTail !== (entry.parent ?? '')) {
+        const next = parentChoices.find((e) => idTail(e._id) === parentTail) ?? null
+        await setParent(current, next)
+      }
     })
   }
 
@@ -93,7 +134,18 @@ export default function TaskDetail({ entry, today, onClose }: Props) {
   const scheduled = isScheduledDate(entry.date)
   const dateHistory = entry.dateHistory || []
   const tags = parseTags(body)
-  const tomorrow = addDays(today, 1)
+  const done = subtasks.filter((e) => e.status === 'completed').length
+  const countable = done + subtasks.filter((e) => e.status === 'task').length
+
+  // Where the entry can go in one tap: a day, or a week or month as a whole
+  const quickDates: [label: string, date: string][] = [
+    ['Today', today],
+    ['Tomorrow', addDays(today, 1)],
+    ['This week', isoWeekKey(today)],
+    ['Next week', addWeeks(isoWeekKey(today), 1)],
+    ['This month', monthKey(today)],
+    ['Next month', addMonths(monthKey(today), 1)],
+  ]
 
   return (
     <dialog
@@ -120,7 +172,18 @@ export default function TaskDetail({ entry, today, onClose }: Props) {
     >
       <div className="sheet-content">
         <header className="sheet-header">
-          <h2 id="task-detail-title">{isGoal ? 'Goal' : 'Entry'}</h2>
+          <h2 id="task-detail-title">
+            {subtasks.length > 0 ? (
+              <>
+                <span className="epic-badge">
+                  <Bolt />
+                </span>{' '}
+                Epic
+              </>
+            ) : (
+              'Entry'
+            )}
+          </h2>
           <button type="button" className="icon-btn icon-btn-plain" onClick={onClose} aria-label="Close" title="Close (Esc)">
             <Close />
           </button>
@@ -145,32 +208,14 @@ export default function TaskDetail({ entry, today, onClose }: Props) {
 
         <div className="field">
           <span className="field-label" id="task-detail-status">
-            {isGoal ? 'Outcome' : 'Kind'}
+            Kind
           </span>
           <div className="choice-group" role="group" aria-labelledby="task-detail-status">
-            {isGoal
-              ? GOAL_STATES.map((g) => (
-                  <button
-                    key={g.label}
-                    type="button"
-                    className="choice"
-                    aria-pressed={g.value === goalState}
-                    onClick={() => setGoalState(g.value)}
-                  >
-                    <span aria-hidden="true">{g.icon}</span> {g.label}
-                  </button>
-                ))
-              : SELECTABLE_STATUSES.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    className="choice"
-                    aria-pressed={s === status}
-                    onClick={() => setStatus(s)}
-                  >
-                    <span aria-hidden="true">{STATUS_ICONS[s]}</span> {s}
-                  </button>
-                ))}
+            {SELECTABLE_STATUSES.map((s) => (
+              <button key={s} type="button" className="choice" aria-pressed={s === status} onClick={() => setStatus(s)}>
+                <span aria-hidden="true">{STATUS_ICONS[s]}</span> {s}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -190,38 +235,32 @@ export default function TaskDetail({ entry, today, onClose }: Props) {
         </div>
 
         <div className="field">
-          <span className="field-label">{isGoal ? 'Period' : 'When'}</span>
+          <span className="field-label">When</span>
           <div className="task-detail-when">
             <span>{formatDateValue(entry.date)}</span>
-            {/* Goals belong to a week or month; the day picker cannot move them */}
-            {!isGoal && (
-              <button
-                type="button"
-                className="btn"
-                aria-expanded={showReschedule}
-                onClick={() => {
-                  setShowReschedule(!showReschedule)
-                  if (!rescheduleDate) setRescheduleDate(tomorrow)
-                }}
-              >
-                {scheduled ? 'Reschedule' : 'Schedule'}
-              </button>
-            )}
+            <button
+              type="button"
+              className="btn"
+              aria-expanded={showReschedule}
+              onClick={() => {
+                setShowReschedule(!showReschedule)
+                if (!rescheduleDate) setRescheduleDate(addDays(today, 1))
+              }}
+            >
+              {scheduled ? 'Reschedule' : 'Schedule'}
+            </button>
           </div>
 
           {showReschedule && (
             <div className="task-detail-reschedule">
               <div className="choice-group">
-                {entry.date !== today && (
-                  <button type="button" className="choice" onClick={() => reschedule(today)}>
-                    Today
-                  </button>
-                )}
-                {entry.date !== tomorrow && (
-                  <button type="button" className="choice" onClick={() => reschedule(tomorrow)}>
-                    Tomorrow
-                  </button>
-                )}
+                {quickDates
+                  .filter(([, date]) => date !== entry.date)
+                  .map(([label, date]) => (
+                    <button key={label} type="button" className="choice" onClick={() => reschedule(date)}>
+                      {label}
+                    </button>
+                  ))}
               </div>
               <div className="task-detail-reschedule-pick">
                 <input
@@ -235,9 +274,8 @@ export default function TaskDetail({ entry, today, onClose }: Props) {
                 </button>
               </div>
               <p className="hint">
-                {scheduled
-                  ? 'Leaves a ">" marker on the day it was on.'
-                  : 'Puts this entry on a day.'}
+                A week or a month means “some time in it”, with no day yet. Moving off a day leaves a “&gt;” marker
+                there.
               </p>
             </div>
           )}
@@ -252,6 +290,71 @@ export default function TaskDetail({ entry, today, onClose }: Props) {
             </ul>
           )}
         </div>
+
+        {canHaveParent && (parentChoices.length > 0 || parent) && (
+          <label className="field">
+            <span className="field-label">Part of</span>
+            <span className="task-detail-parent">
+              <select value={parentTail} onChange={(e) => setParentTail(e.target.value)}>
+                <option value="">Nothing — a task of its own</option>
+                {parentChoices.map((choice) => (
+                  <option key={choice._id} value={idTail(choice._id)}>
+                    {textOf(choice)} · {formatDateCompact(choice.date)}
+                  </option>
+                ))}
+              </select>
+              {parent && parentTail === entry.parent && (
+                <button type="button" className="btn" onClick={() => onOpenEntry(parent)}>
+                  Open
+                </button>
+              )}
+            </span>
+          </label>
+        )}
+
+        {canHaveSubtasks && (
+          <div className="field">
+            <span className="field-label">
+              Subtasks{subtasks.length > 0 && countable > 0 ? ` · ${done} of ${countable} done` : ''}
+            </span>
+            {subtasks.length > 0 && (
+              <ul className="entry-list compact subtask-list">
+                {subtasks.map((sub) => (
+                  <li key={sub._id} className={`entry ${entryClass(sub)}`}>
+                    <button
+                      type="button"
+                      className="signifier"
+                      onClick={() => toggleEntryDone(sub)}
+                      aria-label={`${sub.status === 'completed' || sub.status === 'dropped' ? 'Reopen' : 'Mark done'}: ${textOf(sub)}`}
+                    >
+                      <span className="signifier-box" aria-hidden="true">
+                        {entryIcon(sub)}
+                      </span>
+                    </button>
+                    <span className="entry-meta">{formatDateCompact(sub.date)}</span>
+                    <span className="body">
+                      <button type="button" className="subtask-open body-text" onClick={() => onOpenEntry(sub)}>
+                        {textOf(sub)}
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {addingSubtask ? (
+              <QuickAdd
+                placeholder="New subtask…"
+                // It starts where the epic is; give it its own day from its panel
+                onAdd={(text) => addEntry(entry.date, 'task', text, { parent: entry })}
+                onDone={() => setAddingSubtask(false)}
+              />
+            ) : (
+              <button type="button" className="btn" onClick={() => setAddingSubtask(true)}>
+                Add a subtask
+              </button>
+            )}
+          </div>
+        )}
 
         {error && (
           <p className="form-error" role="alert">

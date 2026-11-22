@@ -1,7 +1,8 @@
 import {
-  bujo,
   completeEntry,
   deleteEntry,
+  getChildren,
+  getOverdueTasks,
   isClosed,
   migrateOpenTasks,
   reopenEntry,
@@ -26,7 +27,8 @@ export async function toggleEntryDone(entry: BujoEntry): Promise<void> {
 }
 
 export async function deleteWithUndo(entry: BujoEntry): Promise<void> {
-  const snapshot = await takeSnapshot([entry])
+  // Deleting an epic sets its subtasks loose: undo has to put those links back too.
+  const snapshot = await takeSnapshot([entry, ...(await getChildren(entry))])
   await deleteEntry(entry)
   showToast('Entry deleted', { label: 'Undo', run: () => restoreSnapshot(snapshot) })
 }
@@ -38,13 +40,13 @@ export async function rescheduleWithUndo(entry: BujoEntry, date: string): Promis
 }
 
 export async function migrateWithUndo(today: string): Promise<void> {
-  const snapshot = await takeSnapshot(await bujo.getOverdueTasks(today))
+  const snapshot = await takeSnapshot(await getOverdueTasks(today))
   const moved = await migrateOpenTasks(today)
   if (moved.length === 0) {
-    showToast('No open tasks to migrate')
+    showToast('No open tasks to carry forward')
     return
   }
-  showToast(`Moved ${moved.length} ${moved.length === 1 ? 'task' : 'tasks'} to today`, {
+  showToast(`Carried ${moved.length} ${moved.length === 1 ? 'task' : 'tasks'} forward`, {
     label: 'Undo',
     run: () => restoreSnapshot(snapshot),
   })

@@ -8,7 +8,6 @@ import { compareEntries, entryClass } from './statusMeta'
 import { useStableList } from './useStableList'
 
 const entryId = (entry: BujoEntry) => entry._id
-const notGoal = (entry: BujoEntry) => entry.status !== 'goal'
 const compareByMonth = (a: BujoEntry, b: BujoEntry) => a.date.localeCompare(b.date) || compareEntries(a, b)
 
 interface Props {
@@ -20,7 +19,6 @@ export default function FutureLog({ onOpenDetail, onTagClick }: Props) {
   const entries = useStableList(useUnscheduledEntries(), {
     id: entryId,
     compare: compareEntries,
-    include: notGoal,
     resetKey: 'unscheduled',
   })
 
